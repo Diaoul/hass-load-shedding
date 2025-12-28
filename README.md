@@ -213,10 +213,22 @@ The blueprint uses a **priority-based algorithm** with the following decision fl
 
 How the blueprint determines if a load is ON or OFF:
 
-| Entity Domain | ON Condition | OFF Condition | Use Case |
-|---------------|--------------|---------------|----------|
-| **Climate** | `hvac_action` = 'heating' or 'cooling' | `hvac_action` = 'idle' or 'off' | Thermostats that cycle on/off |
-| **Switch** | `state` = 'on' | `state` = 'off' | Simple on/off loads |
+| Entity Domain | Detection Method | ON Condition | OFF Condition | Use Case |
+|---------------|------------------|--------------|---------------|----------|
+| **Climate (hvac_action)** | Default | `hvac_action` = 'heating' or 'cooling' | `hvac_action` = 'idle' or 'off' | Thermostats that report hvac_action correctly |
+| **Climate (sensor_based)** | Fallback | `hvac_mode` + temp delta<br>(e.g., mode='heat' AND current < target) | At target temp or mode='off' | Thermostats that don't report hvac_action |
+| **Switch** | N/A | `state` = 'on' | `state` = 'off' | Simple on/off loads |
+
+**Climate Detection Methods:**
+- **hvac_action (recommended)**: Most accurate - detects when actively heating/cooling. Use when your thermostat reports hvac_action correctly.
+- **sensor_based (fallback)**: Uses hvac_mode + temperature sensors to infer heating/cooling. Checks if current temperature is below/above target. More accurate than hvac_mode alone. Use for thermostats that don't report hvac_action.
+- **Configure per load**: Set "Climate Detection Method" field when adding each climate entity
+
+**Sensor-based detection logic:**
+- **Heat mode**: ON when current < target, OFF when current ≥ target
+- **Cool mode**: ON when current > target, OFF when current ≤ target
+- **Auto mode**: ON when current ≠ target, OFF when current = target
+- **Off mode**: Always OFF
 
 **Control Switch (Optional):**
 - **Primary Entity**: Used to detect load state (is it consuming power?)

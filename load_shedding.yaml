@@ -94,12 +94,15 @@ blueprint:
 
             **Fields:**
             - **Primary Entity**: Climate or switch that indicates load status
-              - Climate: Sheds when hvac_action is 'heating' or 'cooling'
+              - Climate: Sheds when hvac_action is 'heating'/'cooling' (or sensor-based if configured)
               - Switch: Sheds when state is 'on'
             - **Control Switch** (optional): Switch to actually control the load
               - If set: Uses this switch for on/off control
               - If empty: Controls primary entity directly
             - **Estimated Power**: Rated power consumption in Watts
+            - **Climate Detection Method** (optional): How to detect if climate is ON
+              - hvac_action (accurate, recommended)
+              - sensor_based (uses hvac_mode + temperature sensors)
           default: []
           selector:
             object:
@@ -131,6 +134,22 @@ blueprint:
                       step: 1
                       unit_of_measurement: "W"
                       mode: box
+
+                climate_detection:
+                  label: Climate Detection Method (Optional)
+                  description: |
+                    How to detect if climate entity is ON. Only applies to climate entities.
+
+                    - **hvac_action**: Check hvac_action attribute (accurate - default)
+                    - **sensor_based**: Use hvac_mode + temperature sensors (fallback for broken thermostats)
+                  default: hvac_action
+                  selector:
+                    select:
+                      options:
+                        - label: hvac_action (accurate, recommended)
+                          value: hvac_action
+                        - label: sensor_based (fallback)
+                          value: sensor_based
 
     timing_and_stability:
       name: Timing & Stability
@@ -407,10 +426,30 @@ action:
                   {% set entity_domain = primary_entity.split('.')[0] %}
 
                   {% if entity_domain == 'climate' %}
-                    {# For climate: check hvac_action attribute #}
-                    {% set hvac_action = state_attr(primary_entity, 'hvac_action') %}
-                    {% if hvac_action in ['heating', 'cooling'] %}
-                      {% set is_load_on.value = true %}
+                    {# Get detection method (default to hvac_action) #}
+                    {% set detection_method = load_obj.get('climate_detection', 'hvac_action') %}
+
+                    {% if detection_method == 'sensor_based' %}
+                      {# Sensor-based: check hvac_mode + temperature delta #}
+                      {% set hvac_mode = states(primary_entity) %}
+                      {% set current_temp = state_attr(primary_entity, 'current_temperature') | float(0) %}
+                      {% set target_temp = state_attr(primary_entity, 'temperature') | float(0) %}
+
+                      {% if hvac_mode == 'heat' and current_temp < target_temp %}
+                        {% set is_load_on.value = true %}
+                      {% elif hvac_mode == 'cool' and current_temp > target_temp %}
+                        {% set is_load_on.value = true %}
+                      {% elif hvac_mode in ['heat_cool', 'auto'] %}
+                        {% if current_temp < target_temp or current_temp > target_temp %}
+                          {% set is_load_on.value = true %}
+                        {% endif %}
+                      {% endif %}
+                    {% else %}
+                      {# Default: check hvac_action attribute #}
+                      {% set hvac_action = state_attr(primary_entity, 'hvac_action') %}
+                      {% if hvac_action in ['heating', 'cooling'] %}
+                        {% set is_load_on.value = true %}
+                      {% endif %}
                     {% endif %}
                   {% elif entity_domain == 'switch' %}
                     {# For switch: check state #}
@@ -555,10 +594,30 @@ action:
                     {% set entity_domain = primary_entity.split('.')[0] %}
 
                     {% if entity_domain == 'climate' %}
-                      {# For climate: check hvac_action attribute #}
-                      {% set hvac_action = state_attr(primary_entity, 'hvac_action') %}
-                      {% if hvac_action in ['idle', 'off'] or hvac_action is none %}
-                        {% set is_load_off.value = true %}
+                      {# Get detection method (default to hvac_action) #}
+                      {% set detection_method = load_obj.get('climate_detection', 'hvac_action') %}
+
+                      {% if detection_method == 'sensor_based' %}
+                        {# Sensor-based: check hvac_mode + temperature delta #}
+                        {% set hvac_mode = states(primary_entity) %}
+                        {% set current_temp = state_attr(primary_entity, 'current_temperature') | float(0) %}
+                        {% set target_temp = state_attr(primary_entity, 'temperature') | float(0) %}
+
+                        {% if hvac_mode == 'off' %}
+                          {% set is_load_off.value = true %}
+                        {% elif hvac_mode == 'heat' and current_temp >= target_temp %}
+                          {% set is_load_off.value = true %}
+                        {% elif hvac_mode == 'cool' and current_temp <= target_temp %}
+                          {% set is_load_off.value = true %}
+                        {% elif hvac_mode in ['heat_cool', 'auto'] and current_temp == target_temp %}
+                          {% set is_load_off.value = true %}
+                        {% endif %}
+                      {% else %}
+                        {# Default: check hvac_action attribute #}
+                        {% set hvac_action = state_attr(primary_entity, 'hvac_action') %}
+                        {% if hvac_action in ['idle', 'off'] or hvac_action is none %}
+                          {% set is_load_off.value = true %}
+                        {% endif %}
                       {% endif %}
                     {% elif entity_domain == 'switch' %}
                       {# For switch: check state #}
