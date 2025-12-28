@@ -1,0 +1,629 @@
+blueprint:
+  name: ⚡ Intelligent Load Shedding
+  description: |
+    Proactive load management to prevent exceeding power capacity limits.
+
+    **Features:**
+    - ⚡ Real-time power monitoring
+    - 🎯 Priority-based load shedding (5 levels)
+    - 🔄 Intelligent load restoration
+    - 🛡️ Configurable safety margins
+    - 🚫 Anti-flapping protection
+    - 🔓 Manual override support
+    - 📊 Per-load configuration via input helpers
+
+    **How it works:**
+    1. Monitors total power consumption (e.g., from Linky meter)
+    2. Sheds lowest-priority loads when approaching capacity (default: 90%)
+    3. Restores highest-priority loads when power drops (default: 80%)
+    4. Prevents rapid on/off cycling with time delays and hysteresis
+
+    **Configuration:** Create input helpers for each load you want to manage. See documentation for helper setup guide.
+  domain: automation
+  input:
+    power_monitoring:
+      name: Power Monitoring
+      icon: mdi:flash
+      collapsed: false
+      input:
+        total_power_sensor:
+          name: 📊 Total Power Consumption Sensor
+          description: Sensor measuring total household power consumption (e.g., Linky meter, whole-home energy monitor)
+          selector:
+            entity:
+              filter:
+                - domain: sensor
+                  device_class: power
+              multiple: false
+
+        max_power_capacity:
+          name: 🔌 Maximum Power Capacity
+          description: Maximum power capacity in Watts (e.g., 9000W for 45A @ 230V single-phase, 12000W for 60A)
+          default: 9000
+          selector:
+            number:
+              min: 1000
+              max: 50000
+              step: 100
+              unit_of_measurement: "W"
+              mode: box
+
+        safety_margin_percent:
+          name: 🛡️ Safety Margin Percentage
+          description: |
+            Start shedding loads when consumption reaches this percentage of max capacity.
+            Example: 90% means shed at 8100W if max is 9000W.
+            Higher values = more proactive shedding.
+          default: 90
+          selector:
+            number:
+              min: 50
+              max: 100
+              step: 1
+              unit_of_measurement: "%"
+              mode: slider
+
+        restoration_margin_percent:
+          name: 🔄 Restoration Margin Percentage
+          description: |
+            Only restore loads when consumption is below this percentage.
+            Should be lower than safety margin to prevent flapping.
+            Example: 80% means restore at 7200W if max is 9000W.
+          default: 80
+          selector:
+            number:
+              min: 50
+              max: 100
+              step: 1
+              unit_of_measurement: "%"
+              mode: slider
+
+    load_configuration:
+      name: Load Configuration
+      icon: mdi:lightning-bolt-circle
+      collapsed: false
+      input:
+        load_priority_selects:
+          name: 🎯 Load Priority Input Selects
+          description: |
+            Input select helpers defining priority for each load.
+            Create one per load with options: Critical, High, Medium, Low, Very Low
+
+            **Important:** Critical loads are NEVER shed automatically.
+
+            **Create helpers** [here](https://my.home-assistant.io/redirect/helpers/).
+          default: []
+          selector:
+            entity:
+              filter:
+                - domain: input_select
+              multiple: true
+
+        load_switch_texts:
+          name: 🔌 Load Switch Entity ID Inputs
+          description: |
+            Input text helpers containing the switch entity ID for each load.
+
+            **Must be in same order as priority selects!**
+
+            Example value: "switch.water_heater"
+          default: []
+          selector:
+            entity:
+              filter:
+                - domain: input_text
+              multiple: true
+
+        load_power_sensor_texts:
+          name: 📊 Load Power Sensor Entity ID Inputs
+          description: |
+            Input text helpers containing the power sensor entity ID for each load.
+
+            **Must be in same order as priority selects!**
+
+            Example value: "sensor.water_heater_power"
+          default: []
+          selector:
+            entity:
+              filter:
+                - domain: input_text
+              multiple: true
+
+    timing_and_stability:
+      name: Timing & Stability
+      icon: mdi:clock-outline
+      collapsed: true
+      input:
+        shedding_delay:
+          name: ⏱️ Shedding Delay
+          description: Wait this long after exceeding threshold before shedding (prevents transient spikes from causing shedding)
+          default:
+            hours: 0
+            minutes: 0
+            seconds: 10
+          selector:
+            duration:
+              enable_day: false
+
+        restoration_delay:
+          name: ⏱️ Restoration Delay
+          description: Wait this long after dropping below threshold before restoring loads
+          default:
+            hours: 0
+            minutes: 1
+            seconds: 0
+          selector:
+            duration:
+              enable_day: false
+
+        minimum_shed_duration:
+          name: ⏱️ Minimum Shed Duration
+          description: Once a load is shed, keep it off for at least this long (prevents rapid cycling)
+          default:
+            hours: 0
+            minutes: 5
+            seconds: 0
+          selector:
+            duration:
+              enable_day: false
+
+    manual_overrides:
+      name: Manual Overrides
+      icon: mdi:hand-back-right
+      collapsed: true
+      input:
+        load_shedding_disable:
+          name: 🛑 Disable Load Shedding
+          description: Toggle to completely disable load shedding (all loads operate normally, all shed loads are restored)
+          default: []
+          selector:
+            entity:
+              filter:
+                - domain:
+                    - input_boolean
+                    - switch
+                    - binary_sensor
+              multiple: false
+
+        load_exemption_booleans:
+          name: 🔓 Per-Load Exemption Toggles
+          description: |
+            Optional input boolean helpers to exempt specific loads from shedding.
+
+            **Must be in same order as priority selects!**
+
+            When ON, that load will never be shed (similar to Critical priority).
+          default: []
+          selector:
+            entity:
+              filter:
+                - domain: input_boolean
+              multiple: true
+
+    tracking_helpers:
+      name: Tracking Helpers (Required)
+      icon: mdi:database
+      collapsed: true
+      input:
+        shed_loads_tracker:
+          name: 📝 Currently Shed Loads Tracker
+          description: |
+            `required`
+
+            Input text helper to track which loads are currently shed by automation.
+            Used to prevent rapid cycling and track state across HA restarts.
+
+            **Initialize as empty string.**
+
+            Create helper [here](https://my.home-assistant.io/redirect/helpers/).
+          selector:
+            entity:
+              filter:
+                - domain: input_text
+              multiple: false
+
+        last_action_datetime:
+          name: ⏰ Last Action DateTime Tracker
+          description: |
+            `required`
+
+            Input datetime helper to track when last shed/restore action occurred.
+            Used for minimum shed duration enforcement.
+
+            **Initialize to any datetime (e.g., 1970-01-01 00:00:00).**
+
+            Create helper [here](https://my.home-assistant.io/redirect/helpers/).
+          selector:
+            entity:
+              filter:
+                - domain: input_datetime
+              multiple: false
+
+variables:
+  # Input assignments
+  total_power_sensor: !input total_power_sensor
+  max_power: !input max_power_capacity
+  safety_margin: !input safety_margin_percent
+  restoration_margin: !input restoration_margin_percent
+  load_priority_selects: !input load_priority_selects
+  load_switch_texts: !input load_switch_texts
+  load_power_sensor_texts: !input load_power_sensor_texts
+  load_exemption_booleans: !input load_exemption_booleans
+  load_shedding_disable: !input load_shedding_disable
+  shed_loads_tracker: !input shed_loads_tracker
+  last_action_datetime: !input last_action_datetime
+  minimum_shed_duration: !input minimum_shed_duration
+  shedding_delay: !input shedding_delay
+  restoration_delay: !input restoration_delay
+
+  # Calculated thresholds
+  shedding_threshold: "{{ (max_power * (safety_margin / 100)) | int }}"
+  restoration_threshold: "{{ (max_power * (restoration_margin / 100)) | int }}"
+
+  # Current state
+  current_power: "{{ states(total_power_sensor) | float(0) }}"
+  load_shedding_disabled: >-
+    {{ load_shedding_disable | length > 0 and is_state(load_shedding_disable, 'on') }}
+
+  # Currently shed loads list (parse JSON from tracker)
+  currently_shed_loads: >-
+    {% set shed_json = states(shed_loads_tracker) %}
+    {% if shed_json in ['', 'unknown', 'unavailable'] %}
+      []
+    {% else %}
+      {{ shed_json | from_json | default([]) }}
+    {% endif %}
+
+  # Last action timestamp
+  last_action_time: >-
+    {% set dt_state = states(last_action_datetime) %}
+    {% if dt_state in ['unknown', 'unavailable'] %}
+      {{ as_timestamp('1970-01-01 00:00:00') }}
+    {% else %}
+      {{ as_timestamp(dt_state) }}
+    {% endif %}
+
+  # Time since last action
+  seconds_since_last_action: >-
+    {{ (now().timestamp() - last_action_time) | int }}
+
+  # Priority mapping (used for sorting)
+  priority_rank_map:
+    'Critical': 5
+    'High': 4
+    'Medium': 3
+    'Low': 2
+    'Very Low': 1
+
+trigger:
+  # Trigger on HA start
+  - trigger: homeassistant
+    event: start
+    id: ha_start
+
+  # Primary trigger: Power consumption changes
+  - trigger: state
+    entity_id: !input total_power_sensor
+    id: power_changed
+
+  # Secondary trigger: Periodic re-evaluation (failsafe)
+  - trigger: time_pattern
+    minutes: "/1"
+    id: periodic_check
+
+  # Trigger when load shedding is disabled/enabled
+  - trigger: state
+    entity_id: !input load_shedding_disable
+    id: override_changed
+
+  # Trigger when any load exemption changes
+  - trigger: state
+    entity_id: !input load_exemption_booleans
+    id: exemption_changed
+
+  # Trigger when any load priority changes
+  - trigger: state
+    entity_id: !input load_priority_selects
+    id: priority_changed
+
+condition: []
+
+action:
+  # STEP 1: Initialize trackers on HA start
+  - if:
+      - condition: template
+        value_template: "{{ trigger.id == 'ha_start' }}"
+    then:
+      # Initialize shed tracker if empty/invalid
+      - if:
+          - condition: template
+            value_template: "{{ states(shed_loads_tracker) in ['', 'unknown', 'unavailable'] }}"
+        then:
+          - service: input_text.set_value
+            target:
+              entity_id: "{{ shed_loads_tracker }}"
+            data:
+              value: "[]"
+
+      # Initialize datetime tracker if unknown
+      - if:
+          - condition: template
+            value_template: "{{ states(last_action_datetime) in ['unknown', 'unavailable'] }}"
+        then:
+          - service: input_datetime.set_datetime
+            target:
+              entity_id: "{{ last_action_datetime }}"
+            data:
+              datetime: "1970-01-01 00:00:00"
+
+  # STEP 2: If load shedding disabled, restore all and exit
+  - if:
+      - condition: template
+        value_template: "{{ load_shedding_disabled }}"
+    then:
+      # Restore all currently shed loads
+      - repeat:
+          count: "{{ currently_shed_loads | length }}"
+          sequence:
+            - variables:
+                load_index: "{{ currently_shed_loads[repeat.index - 1] }}"
+                switch_entity_id_text: "{{ load_switch_texts[load_index] }}"
+                switch_entity: "{{ states(switch_entity_id_text) }}"
+
+            # Validate switch entity
+            - condition: template
+              value_template: "{{ switch_entity not in ['', 'unknown', 'unavailable'] }}"
+
+            # Turn on switch if currently off
+            - if:
+                - condition: template
+                  value_template: "{{ is_state(switch_entity, 'off') }}"
+              then:
+                - service: homeassistant.turn_on
+                  target:
+                    entity_id: "{{ switch_entity }}"
+
+      # Clear shed tracker
+      - service: input_text.set_value
+        target:
+          entity_id: "{{ shed_loads_tracker }}"
+        data:
+          value: "[]"
+
+      - stop: "Load shedding is disabled - all shed loads have been restored"
+
+  # STEP 3: Validate configuration
+  - condition: template
+    value_template: >-
+      {{ load_priority_selects | length > 0
+         and load_switch_texts | length == load_priority_selects | length
+         and load_power_sensor_texts | length == load_priority_selects | length }}
+
+  # STEP 4: Determine mode (shedding or restoration)
+  - variables:
+      power_over_shedding_threshold: "{{ current_power > shedding_threshold }}"
+      power_under_restoration_threshold: "{{ current_power < restoration_threshold }}"
+
+  # STEP 5: SHEDDING MODE
+  - if:
+      - condition: template
+        value_template: "{{ power_over_shedding_threshold }}"
+    then:
+      # Wait for shedding delay to prevent transient spike reactions
+      # Only enforce delay for power_changed trigger
+      - if:
+          - condition: template
+            value_template: "{{ trigger.id == 'power_changed' }}"
+        then:
+          - delay: !input shedding_delay
+
+      # Re-check power after delay (might have dropped)
+      - variables:
+          current_power_after_delay: "{{ states(total_power_sensor) | float(0) }}"
+
+      - if:
+          - condition: template
+            value_template: "{{ current_power_after_delay > shedding_threshold }}"
+        then:
+          # Build candidate list for shedding
+          - variables:
+              candidates_to_shed: >-
+                {% set ns = namespace(candidates=[]) %}
+                {% for i in range(load_priority_selects | length) %}
+                  {% set priority = states(load_priority_selects[i]) %}
+                  {% set switch_entity_id_text = load_switch_texts[i] %}
+                  {% set switch_entity = states(switch_entity_id_text) %}
+                  {% set power_sensor_text = load_power_sensor_texts[i] %}
+                  {% set power_sensor = states(power_sensor_text) %}
+                  {% set exempted = load_exemption_booleans | length > i and is_state(load_exemption_booleans[i], 'on') %}
+
+                  {# Skip Critical priority loads (never shed) #}
+                  {% if priority == 'Critical' %}
+                    {% continue %}
+                  {% endif %}
+
+                  {# Skip exempted loads #}
+                  {% if exempted %}
+                    {% continue %}
+                  {% endif %}
+
+                  {# Skip if switch entity is invalid #}
+                  {% if switch_entity in ['', 'unknown', 'unavailable'] %}
+                    {% continue %}
+                  {% endif %}
+
+                  {# Skip if already off #}
+                  {% if not is_state(switch_entity, 'on') %}
+                    {% continue %}
+                  {% endif %}
+
+                  {# Add to candidates #}
+                  {% set load_power = states(power_sensor) | float(0) %}
+                  {% set priority_rank = priority_rank_map[priority] | default(1) %}
+                  {% set ns.candidates = ns.candidates + [{
+                    'index': i,
+                    'priority_rank': priority_rank,
+                    'power': load_power,
+                    'switch': switch_entity
+                  }] %}
+                {% endfor %}
+
+                {# Sort: lowest priority first (ascending rank), highest power first within same priority (descending power) #}
+                {% set sorted_by_power = ns.candidates | sort(attribute='power', reverse=true) %}
+                {{ sorted_by_power | sort(attribute='priority_rank') }}
+
+              # Calculate deficit
+              power_deficit: "{{ current_power_after_delay - shedding_threshold }}"
+
+          # Shed loads iteratively
+          - variables:
+              shed_indices: []
+              remaining_deficit: "{{ power_deficit }}"
+
+          - repeat:
+              for_each: "{{ candidates_to_shed }}"
+              sequence:
+                # Only shed if still needed
+                - condition: template
+                  value_template: "{{ remaining_deficit > 0 }}"
+
+                # Turn off switch
+                - service: homeassistant.turn_off
+                  target:
+                    entity_id: "{{ repeat.item.switch }}"
+
+                # Track this shed load
+                - variables:
+                    shed_indices: "{{ shed_indices + [repeat.item.index] }}"
+                    remaining_deficit: "{{ (remaining_deficit - repeat.item.power) | float }}"
+
+          # Update tracker with newly shed loads
+          - if:
+              - condition: template
+                value_template: "{{ shed_indices | length > 0 }}"
+            then:
+              - variables:
+                  all_shed_loads: "{{ (currently_shed_loads + shed_indices) | unique | list }}"
+
+              - service: input_text.set_value
+                target:
+                  entity_id: "{{ shed_loads_tracker }}"
+                data:
+                  value: "{{ all_shed_loads | to_json }}"
+
+              - service: input_datetime.set_datetime
+                target:
+                  entity_id: "{{ last_action_datetime }}"
+                data:
+                  datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+
+  # STEP 6: RESTORATION MODE
+  - if:
+      - condition: template
+        value_template: "{{ power_under_restoration_threshold and currently_shed_loads | length > 0 }}"
+    then:
+      # Wait for restoration delay
+      - if:
+          - condition: template
+            value_template: "{{ trigger.id == 'power_changed' }}"
+        then:
+          - delay: !input restoration_delay
+
+      # Re-check power after delay (might have increased)
+      - variables:
+          current_power_after_delay: "{{ states(total_power_sensor) | float(0) }}"
+
+      - if:
+          - condition: template
+            value_template: "{{ current_power_after_delay < restoration_threshold }}"
+        then:
+          # Check minimum shed duration
+          - condition: template
+            value_template: >-
+              {{ seconds_since_last_action >= minimum_shed_duration.total_seconds() }}
+
+          # Build restoration candidates
+          - variables:
+              candidates_to_restore: >-
+                {% set ns = namespace(candidates=[]) %}
+                {% for index in currently_shed_loads %}
+                  {% set priority = states(load_priority_selects[index]) %}
+                  {% set switch_entity_id_text = load_switch_texts[index] %}
+                  {% set switch_entity = states(switch_entity_id_text) %}
+                  {% set power_sensor_text = load_power_sensor_texts[index] %}
+                  {% set power_sensor = states(power_sensor_text) %}
+
+                  {# Skip if switch entity is invalid #}
+                  {% if switch_entity in ['', 'unknown', 'unavailable'] %}
+                    {% continue %}
+                  {% endif %}
+
+                  {# Skip if manually turned back on #}
+                  {% if is_state(switch_entity, 'on') %}
+                    {% continue %}
+                  {% endif %}
+
+                  {# Add to candidates #}
+                  {% set load_power = states(power_sensor) | float(0) %}
+                  {% set priority_rank = priority_rank_map[priority] | default(1) %}
+                  {% set ns.candidates = ns.candidates + [{
+                    'index': index,
+                    'priority_rank': priority_rank,
+                    'power': load_power,
+                    'switch': switch_entity
+                  }] %}
+                {% endfor %}
+
+                {# Sort: highest priority first (descending rank), lowest power first within same priority (ascending power) #}
+                {% set sorted_by_power = ns.candidates | sort(attribute='power') %}
+                {{ sorted_by_power | sort(attribute='priority_rank', reverse=true) }}
+
+              # Calculate available budget
+              available_budget: "{{ restoration_threshold - current_power_after_delay }}"
+
+          # Restore loads iteratively
+          - variables:
+              power_accumulator: "{{ current_power_after_delay }}"
+              restored_indices: []
+
+          - repeat:
+              for_each: "{{ candidates_to_restore }}"
+              sequence:
+                # Check if we have budget for this load
+                - condition: template
+                  value_template: "{{ repeat.item.power <= (restoration_threshold - power_accumulator) }}"
+
+                # Turn on switch
+                - service: homeassistant.turn_on
+                  target:
+                    entity_id: "{{ repeat.item.switch }}"
+
+                # Track restoration
+                - variables:
+                    power_accumulator: "{{ (power_accumulator + repeat.item.power) | float }}"
+                    restored_indices: "{{ restored_indices + [repeat.item.index] }}"
+
+          # Update tracker (remove restored loads)
+          - if:
+              - condition: template
+                value_template: "{{ restored_indices | length > 0 }}"
+            then:
+              - variables:
+                  remaining_shed_loads: >-
+                    {{ currently_shed_loads | reject('in', restored_indices) | list }}
+
+              - service: input_text.set_value
+                target:
+                  entity_id: "{{ shed_loads_tracker }}"
+                data:
+                  value: "{{ remaining_shed_loads | to_json }}"
+
+              - service: input_datetime.set_datetime
+                target:
+                  entity_id: "{{ last_action_datetime }}"
+                data:
+                  datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+
+mode: queued
+max: 10
+max_exceeded: silent
