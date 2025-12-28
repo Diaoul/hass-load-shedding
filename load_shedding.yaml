@@ -94,8 +94,15 @@ blueprint:
             **Priority is determined by order:**
             - Loads at the top of the list have highest priority (shed last)
             - Loads at the bottom have lowest priority (shed first)
+            - Use drag & drop to reorder loads and adjust priorities
 
-            Use drag & drop to reorder loads and adjust priorities.
+            **Fields:**
+            - **Name**: Friendly name for the load
+            - **Switch**: Entity to control the load on/off
+            - **Estimated Power**: Rated power consumption in Watts (check device specs)
+            - **Status Sensor** (optional): Sensor showing if load is actually ON (e.g., binary_sensor.heater_running)
+              - If provided: Only shed when status = 'on'
+              - If empty: Assume switch state = power state
           default: []
           selector:
             object:
@@ -115,10 +122,7 @@ blueprint:
                       multiple: false
 
                 max_power:
-                  label: Estimated Power Consumption
-                  description: >
-                    Rated or estimated power consumption in Watts when this load is ON.
-                    This value is used for deficit calculations and restoration budgeting.
+                  label: Estimated Power (Watts)
                   selector:
                     number:
                       min: 1
@@ -129,15 +133,6 @@ blueprint:
 
                 status_sensor:
                   label: Status Sensor (Optional)
-                  description: >
-                    OPTIONAL: Binary sensor or sensor that indicates if this load is currently ON.
-
-                    - If provided: Only shed loads when status is 'on', skip when 'off'
-
-                    - If NOT provided: Always consider load as potential candidate
-
-                    Accepts binary_sensor (on/off) or regular sensor with 'on'/'off' states.
-                  default: ""
                   selector:
                     entity:
                       filter:
