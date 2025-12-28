@@ -273,13 +273,7 @@ variables:
     {% endif %}
 
   # Last action timestamp
-  last_action_time: >-
-    {% set dt_state = states(last_action_datetime) %}
-    {% if dt_state in ['unknown', 'unavailable'] %}
-      {{ as_timestamp('1970-01-01 00:00:00') }}
-    {% else %}
-      {{ as_timestamp(dt_state) }}
-    {% endif %}
+  last_action_time: "{{ states(last_action_datetime) | as_local | as_timestamp }}"
 
   # Time since last action
   seconds_since_last_action: >-
@@ -324,17 +318,6 @@ action:
               entity_id: "{{ shed_loads_tracker }}"
             data:
               value: "[]"
-
-      # Initialize datetime tracker if unknown
-      - if:
-          - condition: template
-            value_template: "{{ states(last_action_datetime) in ['unknown', 'unavailable'] }}"
-        then:
-          - service: input_datetime.set_datetime
-            target:
-              entity_id: "{{ last_action_datetime }}"
-            data:
-              datetime: "1970-01-01 00:00:00"
 
       # Clean up orphaned entity IDs from tracker
       - variables:
