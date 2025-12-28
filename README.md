@@ -11,11 +11,11 @@ Intelligent, priority-based electrical load management to prevent exceeding powe
 ## ✨ Features
 
 - ⚡ **Real-time Power Monitoring** - Tracks total consumption from your meter (Linky, Shelly, etc.)
-- 🎯 **Priority-Based Control** - 5-level priority system (Critical, High, Medium, Low, Very Low)
+- 🎯 **Order-Based Priority** - Priority determined by list order (top = highest, bottom = lowest)
 - 🛡️ **Proactive Protection** - Sheds loads before hitting capacity (configurable safety margin)
 - 🔄 **Intelligent Restoration** - Restores highest-priority loads first when power budget available
 - 🚫 **Anti-Flapping Protection** - Prevents rapid on/off cycling with hysteresis and time delays
-- 🔓 **Manual Overrides** - Global disable switch and per-load exemptions
+- 🔓 **Manual Override** - Global disable switch to bypass load shedding
 - 📝 **Structured Configuration** - Simple form-based setup with no input helpers needed per load
 
 ## 🚀 Quick Start
@@ -63,30 +63,26 @@ Go to **Settings** → **Devices & Services** → [**Helpers**](https://my.home-
 
 **Managed Loads:**
 
-Click "Add Load" for each load you want to manage:
+Click "Add Load" for each load you want to manage. **Priority is determined by order** - loads at the top have highest priority (shed last), loads at the bottom have lowest priority (shed first).
 
-**Example: Water Heater**
-- Name: `Water Heater`
-- Switch Entity: `switch.water_heater`
-- Power Sensor: `sensor.water_heater_power`
-- Priority: `Low`
-- Exempt from Shedding: *(unchecked)*
+**Example loads (in priority order - highest to lowest):**
 
-**Example: EV Charger**
-- Name: `EV Charger`
-- Switch Entity: `switch.ev_charger`
-- Power Sensor: `sensor.ev_charger_power`
-- Priority: `Medium`
-- Exempt from Shedding: *(unchecked)*
+1. **Heat Pump** (highest priority - shed last)
+   - Name: `Heat Pump`
+   - Switch Entity: `switch.heat_pump`
+   - Power Sensor: `sensor.heat_pump_power`
 
-**Example: Heat Pump**
-- Name: `Heat Pump`
-- Switch Entity: `switch.heat_pump`
-- Power Sensor: `sensor.heat_pump_power`
-- Priority: `High`
-- Exempt from Shedding: *(unchecked)*
+2. **EV Charger** (medium priority)
+   - Name: `EV Charger`
+   - Switch Entity: `switch.ev_charger`
+   - Power Sensor: `sensor.ev_charger_power`
 
-Repeat for all loads.
+3. **Water Heater** (lowest priority - shed first)
+   - Name: `Water Heater`
+   - Switch Entity: `switch.water_heater`
+   - Power Sensor: `sensor.water_heater_power`
+
+Use drag & drop to reorder loads and adjust priorities.
 
 **Tracking Helpers:**
 - Shed Tracker: `input_text.load_shedding_shed_tracker`
@@ -102,8 +98,8 @@ Repeat for all loads.
 1. **Monitor** - Continuously tracks total power consumption
 2. **Evaluate** - When power exceeds safety threshold (default 90%):
    - Wait for shedding delay (prevents reacting to transient spikes)
-   - Build list of sheddable loads (excludes Critical priority and exempted loads)
-   - Sort by priority (lowest first), then power (highest first within same priority)
+   - Build list of active loads that can be shed
+   - Sort by list order (highest index first = lowest priority), then power (highest first)
 3. **Shed** - Turn off loads until under threshold
 4. **Track** - Remember which loads were shed
 
@@ -113,7 +109,7 @@ Repeat for all loads.
    - Wait for restoration delay
    - Check minimum shed duration elapsed
 2. **Evaluate** - Build list of shed loads:
-   - Sort by priority (highest first), then power (lowest first within same priority)
+   - Sort by list order (lowest index first = highest priority), then power (lowest first)
 3. **Restore** - Turn on loads one at a time while budget available
 4. **Track** - Update shed list
 
@@ -124,36 +120,37 @@ Repeat for all loads.
 - Safety margin: 90% (shed at 8100W)
 - Restoration margin: 80% (restore at 7200W)
 
-**Loads:**
-1. Heat Pump - 2000W - High priority
-2. Water Heater - 3000W - Low priority
-3. EV Charger - 7000W - Medium priority
-4. Dishwasher - 1500W - Low priority
+**Loads (in priority order - highest to lowest):**
+1. Heat Pump - 2000W (index 0 - highest priority)
+2. EV Charger - 7000W (index 1)
+3. Water Heater - 3000W (index 2)
+4. Dishwasher - 1500W (index 3 - lowest priority)
 
 **Timeline:**
 1. **Initial:** Heat pump ON (2000W)
 2. **EV plugged in:** EV + heat pump = 9000W (under 8100W threshold) ✅
 3. **Water heater starts:** 2000 + 7000 + 3000 = 12000W (exceeds 8100W) ⚠️
 4. **After 10s delay:** Shed lowest priority first:
-   - Shed water heater (Low, 3000W) → 9000W
-   - Still over 8100W, shed dishwasher... but it's not on, skip
-   - Shed next: EV charger (Medium, 7000W) → 2000W ✅
+   - Shed dishwasher (index 3)... but it's not on, skip
+   - Shed water heater (index 2, 3000W) → 9000W
+   - Still over 8100W, shed EV charger (index 1, 7000W) → 2000W ✅
 5. **Current state:** Only heat pump ON, water heater + EV charger shed
 6. **Heat pump cycles off:** 0W (under 7200W restoration threshold)
 7. **After 1min delay + 5min minimum shed:**
-   - Restore highest priority first: EV charger (Medium) → 7000W
-   - Try water heater (Low): 7000 + 3000 = 10000W > 7200W ❌ (not enough budget)
+   - Restore highest priority first: EV charger (index 1) → 7000W
+   - Try water heater (index 2): 7000 + 3000 = 10000W > 7200W ❌ (not enough budget)
 8. **Final:** EV charging, water heater still shed (will restore when EV finishes)
 
 ## 🎛️ Configuration Tips
 
 ### Priority Guidelines
 
-- **Critical** - Never shed (e.g., refrigerator, security systems, medical equipment)
-- **High** - Essential comfort (e.g., heating/cooling in main living areas)
-- **Medium** - Important but deferrable (e.g., EV charging, water heater)
-- **Low** - Nice to have (e.g., dishwasher, laundry)
-- **Very Low** - Lowest priority (e.g., pool pump, electric car pre-conditioning)
+Priority is determined by the order of loads in your configuration:
+- **Loads at the top** - Highest priority, shed last (e.g., heating/cooling, essential appliances)
+- **Loads in the middle** - Medium priority (e.g., EV charging, water heater)
+- **Loads at the bottom** - Lowest priority, shed first (e.g., pool pump, laundry, dishwasher)
+
+**Tip:** If you have loads you never want shed, simply don't include them in the managed loads list. Only add loads you're willing to have turned off automatically.
 
 ### Timing Guidelines
 
@@ -171,7 +168,7 @@ Repeat for all loads.
 
 If you encounter issues:
 - **Validation errors:** Check for duplicate load names or duplicate switch entities
-- **Loads not shedding:** Verify priority levels (Critical loads never shed) and check switch/sensor entities are valid
+- **Loads not shedding:** Check switch/sensor entities are valid and loads are included in managed loads list
 - **HA version:** Ensure you're running Home Assistant 2025.7.0 or later
 - Review automation traces in **Settings** → **Automations & Scenes** → _your automation_ → **Traces**
 - Check tracker state in **Developer Tools** → **States** → `input_text.load_shedding_shed_tracker`

@@ -91,14 +91,11 @@ blueprint:
             Configure each load you want to manage.
             Click "Add Item" to add a new load.
 
-            **Priority levels:**
-            - Critical: Never shed automatically
-            - High: Essential comfort (heating/cooling)
-            - Medium: Important but deferrable (EV, water heater)
-            - Low: Nice to have (dishwasher, laundry)
-            - Very Low: Lowest priority (pool pump)
+            **Priority is determined by order:**
+            - Loads at the top of the list have highest priority (shed last)
+            - Loads at the bottom have lowest priority (shed first)
 
-            **Exempt from Shedding:** When enabled, load behaves like Critical priority.
+            Use drag & drop to reorder loads and adjust priorities.
           default: []
           selector:
             object:
@@ -107,13 +104,11 @@ blueprint:
               fields:
                 name:
                   label: Load Name
-                  required: true
                   selector:
                     text:
 
                 switch_entity:
                   label: Switch Entity
-                  required: true
                   selector:
                     entity:
                       domain: switch
@@ -121,31 +116,11 @@ blueprint:
 
                 power_sensor:
                   label: Power Sensor
-                  required: true
                   selector:
                     entity:
                       domain: sensor
                       device_class: power
                       multiple: false
-
-                priority:
-                  label: Priority
-                  required: true
-                  selector:
-                    select:
-                      options:
-                        - Critical
-                        - High
-                        - Medium
-                        - Low
-                        - Very Low
-                      mode: dropdown
-
-                exempt_from_shedding:
-                  label: Exempt from Shedding
-                  required: false
-                  selector:
-                    boolean:
 
     timing_and_stability:
       name: Timing & Stability
@@ -298,14 +273,6 @@ variables:
   # Time since last action
   seconds_since_last_action: >-
     {{ (now().timestamp() - last_action_time) | int }}
-
-  # Priority mapping (used for sorting)
-  priority_rank_map:
-    'Critical': 5
-    'High': 4
-    'Medium': 3
-    'Low': 2
-    'Very Low': 1
 
 trigger:
   # Trigger on HA start
@@ -476,20 +443,9 @@ action:
                 {% set ns = namespace(candidates=[]) %}
                 {% for load in managed_loads %}
                   {% set load_name = load.name %}
-                  {% set priority = load.priority %}
+                  {% set load_index = loop.index0 %}
                   {% set switch_entity = load.switch_entity %}
                   {% set power_sensor = load.power_sensor %}
-                  {% set exempted = load.exempt_from_shedding | default(false) %}
-
-                  {# Skip Critical priority loads (never shed) #}
-                  {% if priority == 'Critical' %}
-                    {% continue %}
-                  {% endif %}
-
-                  {# Skip exempted loads #}
-                  {% if exempted %}
-                    {% continue %}
-                  {% endif %}
 
                   {# Skip if switch entity invalid #}
                   {% if not states(switch_entity) in ['on', 'off'] %}
@@ -509,18 +465,17 @@ action:
 
                   {# Add to candidates #}
                   {% set load_power = power_state | float(0) %}
-                  {% set priority_rank = priority_rank_map[priority] | default(1) %}
                   {% set ns.candidates = ns.candidates + [{
                     'name': load_name,
-                    'priority_rank': priority_rank,
+                    'index': load_index,
                     'power': load_power,
                     'switch': switch_entity
                   }] %}
                 {% endfor %}
 
-                {# Sort: lowest priority first (ascending rank), highest power first within same priority (descending power) #}
+                {# Sort: highest index first (lowest priority = shed first), highest power first within same priority #}
                 {% set sorted_by_power = ns.candidates | sort(attribute='power', reverse=true) %}
-                {{ sorted_by_power | sort(attribute='priority_rank') }}
+                {{ sorted_by_power | sort(attribute='index', reverse=true) }}
 
               # Calculate deficit
               power_deficit: "{{ current_power_after_delay - shedding_threshold }}"
@@ -597,18 +552,24 @@ action:
               candidates_to_restore: >-
                 {% set ns = namespace(candidates=[]) %}
                 {% for load_name in currently_shed_loads %}
-                  {# Find the load object by name #}
-                  {% set load = managed_loads | selectattr('name', 'eq', load_name) | first | default(none) %}
+                  {# Find the load object and its index #}
+                  {% set load_index = namespace(value=-1) %}
+                  {% set load = namespace(obj=none) %}
+                  {% for l in managed_loads %}
+                    {% if l.name == load_name %}
+                      {% set load.obj = l %}
+                      {% set load_index.value = loop.index0 %}
+                    {% endif %}
+                  {% endfor %}
 
                   {# Skip if load not found (was removed from config) #}
-                  {% if load is none %}
+                  {% if load.obj is none %}
                     {% continue %}
                   {% endif %}
 
                   {# Extract load properties #}
-                  {% set priority = load.priority %}
-                  {% set switch_entity = load.switch_entity %}
-                  {% set power_sensor = load.power_sensor %}
+                  {% set switch_entity = load.obj.switch_entity %}
+                  {% set power_sensor = load.obj.power_sensor %}
 
                   {# Validate switch entity exists #}
                   {% if not states(switch_entity) in ['on', 'off'] %}
@@ -628,18 +589,17 @@ action:
 
                   {# Add to candidates #}
                   {% set load_power = power_state | float(0) %}
-                  {% set priority_rank = priority_rank_map[priority] | default(1) %}
                   {% set ns.candidates = ns.candidates + [{
                     'name': load_name,
-                    'priority_rank': priority_rank,
+                    'index': load_index.value,
                     'power': load_power,
                     'switch': switch_entity
                   }] %}
                 {% endfor %}
 
-                {# Sort: highest priority first (descending rank), lowest power first within same priority (ascending power) #}
+                {# Sort: lowest index first (highest priority = restore first), lowest power first within same priority #}
                 {% set sorted_by_power = ns.candidates | sort(attribute='power') %}
-                {{ sorted_by_power | sort(attribute='priority_rank', reverse=true) }}
+                {{ sorted_by_power | sort(attribute='index') }}
 
               # Calculate available budget
               available_budget: "{{ restoration_threshold - current_power_after_delay }}"

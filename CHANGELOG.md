@@ -11,11 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial release of Load Shedding Blueprint
 - Real-time power monitoring from total consumption sensor (e.g., Linky meter)
 - Proactive load shedding with configurable safety margins (default 90%)
-- 5-level priority system (Critical, High, Medium, Low, Very Low)
+- Order-based priority system (top = highest priority, bottom = lowest)
 - Priority-based restoration (highest priority first)
 - Anti-flapping protection with hysteresis and time delays
 - Structured load configuration using object selector (HA 2025.7+)
-- Per-load exemption from shedding
 - Manual override to globally disable load shedding
 - State persistence across HA restarts
 - Configuration validation (duplicate names/switches)
