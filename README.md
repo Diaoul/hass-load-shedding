@@ -1,4 +1,4 @@
-# ⚡ Intelligent Load Shedding
+# ⚡ Load Shedding
 
 A smart, reliable Home Assistant blueprint for managing electrical loads to prevent exceeding power capacity limits.
 
@@ -6,7 +6,7 @@ A smart, reliable Home Assistant blueprint for managing electrical loads to prev
 
 [![Import Load Shedding Blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2FDiaoul%2Fhass-load-shedding%2Fmain%2Fload_shedding.yaml)
 
-Intelligent, priority-based electrical load management to prevent exceeding power capacity limits. Perfect for homes with limited electrical capacity, solar installations, or time-of-use tariffs.
+Priority-based electrical load management to prevent exceeding power capacity limits. Perfect for homes with limited electrical capacity, solar installations, or time-of-use tariffs.
 
 ## ✨ Features
 
@@ -15,46 +15,49 @@ Intelligent, priority-based electrical load management to prevent exceeding powe
 - 🛡️ **Proactive Protection** - Sheds loads before hitting capacity (configurable safety margin)
 - 🔄 **Intelligent Restoration** - Restores highest-priority loads first when power budget available
 - 🚫 **Anti-Flapping Protection** - Prevents rapid on/off cycling with hysteresis and time delays
-- 🔓 **Manual Override** - Global disable switch to bypass load shedding
 - 📝 **Structured Configuration** - Simple form-based setup with no input helpers needed per load
+
+## 📦 Installation
+
+Click the button above to import the blueprint directly into your Home Assistant.
 
 ## 🚀 Quick Start
 
-### Prerequisites
+1. **Create tracking helpers** - One-time setup (see below)
+2. **Create an automation** from the blueprint
+3. **Configure power monitoring** - Power sensor, capacity, margins
+4. **Add your loads** - Click "Add Load" for each appliance
+5. **Set tracking helpers** - Link the helpers you created
 
-You need:
-1. **Total power sensor** - Measures household consumption (e.g., `sensor.linky_power`)
-2. **Controllable loads** - Each needs:
-   - Primary entity (climate or switch) to detect load status
-   - Estimated power consumption in Watts (rated power)
-   - (Optional) Separate control switch for on/off control
-3. **Max capacity** - Your electrical limit in Watts (e.g., 9000W for 45A @ 230V)
+### ⏱️ Required: Tracking Helpers
 
-### Setup Steps
+For load shedding to work, create 2 helpers to track automation state:
 
-#### 1. Create Tracking Helpers (One-Time Setup)
-
-Create **2 global helpers** to track automation state:
+**1. Create Helpers**
 
 Go to **Settings** → **Devices & Services** → [**Helpers**](https://my.home-assistant.io/redirect/helpers/)
 
-1. **Shed Tracker** (Input Text):
-   - Name: `Load Shedding - Shed Tracker`
-   - Entity ID: `input_text.load_shedding_shed_tracker`
-   - Initial value: *(leave empty)*
-   - Max length: 255 (or higher if managing many loads)
+Create these two helpers:
 
-2. **Last Action Time** (Input DateTime):
-   - Name: `Load Shedding - Last Action`
-   - Entity ID: `input_datetime.load_shedding_last_action`
-   - Has date: ✅ Enabled
-   - Has time: ✅ Enabled
+**a) Shed Tracker (Input Text)**
+- Name: `Load Shedding - Shed Tracker`
+- Entity ID: `input_text.load_shedding_shed_tracker`
+- Initial value: *(leave empty)*
+- Max length: 255 (or higher if managing many loads)
 
-#### 2. Import and Configure Blueprint
+**b) Last Action Time (Date and Time)**
+- Name: `Load Shedding - Last Action`
+- Entity ID: `input_datetime.load_shedding_last_action`
+- Has date: ✅ Enabled
+- Has time: ✅ Enabled
 
-1. Click the import button at the top of this README
-2. Create automation from blueprint
-3. Configure each section:
+**2. Configure in Blueprint**
+
+Select your helpers in the **Tracking Helpers** section.
+
+**Why?** These helpers track which loads are currently shed and prevent rapid cycling by recording action timestamps.
+
+### 💡 Configuration Example
 
 **Power Monitoring:**
 - Total Power Sensor: `sensor.linky_power`
@@ -66,31 +69,15 @@ Go to **Settings** → **Devices & Services** → [**Helpers**](https://my.home-
 
 Click "Add Load" for each load you want to manage. **Priority is determined by order** - loads at the top have highest priority (shed last), loads at the bottom have lowest priority (shed first).
 
-**Example loads (in priority order - highest to lowest):**
+**Example loads (in priority order):**
 
-1. **Heat Pump** (highest priority - shed last)
-   - Primary Entity: `climate.living_room`
-   - Control Switch: `switch.heat_pump_breaker` (optional - to cut power)
-   - Estimated Power: `2000` W
+| Priority | Load | Primary Entity | Control Switch | Power |
+|----------|------|----------------|----------------|-------|
+| 🔴 **Highest** | Heat Pump | `climate.living_room` | `switch.heat_pump_breaker` | 2000W |
+| 🟡 **Medium** | EV Charger | `switch.ev_charger` | *(leave empty)* | 7000W |
+| 🟢 **Lowest** | Water Heater | `switch.water_heater` | *(leave empty)* | 3000W |
 
-2. **EV Charger** (medium priority)
-   - Primary Entity: `switch.ev_charger`
-   - Control Switch: *(leave empty - control switch directly)*
-   - Estimated Power: `7000` W
-
-3. **Water Heater** (lowest priority - shed first)
-   - Primary Entity: `switch.water_heater`
-   - Control Switch: *(leave empty)*
-   - Estimated Power: `3000` W
-
-Use drag & drop to reorder loads and adjust priorities.
-
-**Tracking Helpers:**
-- Shed Tracker: `input_text.load_shedding_shed_tracker`
-- Last Action DateTime: `input_datetime.load_shedding_last_action`
-
-**Optional:**
-- Disable Load Shedding: Create `input_boolean.disable_load_shedding` to globally disable
+💡 **Tip**: Use drag & drop in the blueprint UI to reorder loads and adjust priorities.
 
 ## 🧠 How It Works
 
@@ -182,6 +169,82 @@ Priority is determined by the order of loads in your configuration:
   - Example: Monitor `climate.bedroom` but control via `switch.bedroom_breaker`
 - **When to skip**: Direct control of primary entity is fine
   - Example: `switch.pool_pump` can be controlled directly
+
+---
+
+## 📚 Advanced Documentation
+
+<details>
+<summary><b>🔍 Detailed Decision Logic (Click to expand)</b></summary>
+
+### Load Shedding Algorithm
+
+The blueprint uses a **priority-based algorithm** with the following decision flow:
+
+**Shedding Mode** (when power > safety threshold):
+
+| Step | Action | Priority Sort |
+|------|--------|---------------|
+| 1️⃣ | Wait for shedding delay (10s default) | - |
+| 2️⃣ | Identify active loads that can be shed | - |
+| 3️⃣ | Sort candidates | **List order (highest index first)**, then power (highest first) |
+| 4️⃣ | Shed loads one by one until under threshold | Lowest priority shed first |
+| 5️⃣ | Track shed loads in helper | - |
+
+**Restoration Mode** (when power < restoration threshold):
+
+| Step | Action | Priority Sort |
+|------|--------|---------------|
+| 1️⃣ | Wait for restoration delay (1m default) | - |
+| 2️⃣ | Check minimum shed duration (5m default) | - |
+| 3️⃣ | Identify shed loads that are OFF | - |
+| 4️⃣ | Sort candidates | **List order (lowest index first)**, then power (lowest first) |
+| 5️⃣ | Calculate available power budget | restoration_threshold - current_power |
+| 6️⃣ | Restore loads one by one while budget available | Highest priority restored first |
+| 7️⃣ | Update tracker after each restoration | - |
+
+**Key Points:**
+- **Priority = List Order**: Top load in config = highest priority (shed last, restore first)
+- **Power is secondary sort**: When same priority level, higher power shed first (makes more room), lower power restored first (fits in budget easier)
+- **Delays prevent flapping**: Shedding delay avoids transient spikes, restoration delay allows stabilization
+- **Minimum shed duration**: Prevents rapid cycling that damages appliances
+
+### Load State Detection
+
+How the blueprint determines if a load is ON or OFF:
+
+| Entity Domain | ON Condition | OFF Condition | Use Case |
+|---------------|--------------|---------------|----------|
+| **Climate** | `hvac_action` = 'heating' or 'cooling' | `hvac_action` = 'idle' or 'off' | Thermostats that cycle on/off |
+| **Switch** | `state` = 'on' | `state` = 'off' | Simple on/off loads |
+
+**Control Switch (Optional):**
+- **Primary Entity**: Used to detect load state (is it consuming power?)
+- **Control Switch**: Used to actually turn load on/off
+- **Example**: Monitor `climate.bedroom` status, control via `switch.bedroom_breaker`
+- **When to use**: Status entity differs from control entity
+- **When to skip**: Primary entity can be controlled directly
+
+### Anti-Flapping Protection
+
+Multiple layers prevent rapid on/off cycling:
+
+| Protection | Default | Purpose |
+|------------|---------|---------|
+| **Shedding Delay** | 10 seconds | Ignore transient power spikes (appliance startups) |
+| **Restoration Delay** | 1 minute | Let power stabilize before restoring |
+| **Minimum Shed Duration** | 5 minutes | Prevent damage from frequent power cycling |
+| **Hysteresis Gap** | 10% (90% shed, 80% restore) | Prevent threshold bounce |
+| **Margin Validation** | Enforced | Blocks configurations where restoration ≥ safety |
+
+**Example:**
+- Safety margin: 90% (shed at 8100W)
+- Restoration margin: 80% (restore at 7200W)
+- Gap: 900W buffer prevents constant shed/restore
+
+</details>
+
+---
 
 ## 🤝 Support
 

@@ -1,5 +1,5 @@
 blueprint:
-  name: ⚡ Intelligent Load Shedding
+  name: ⚡ Load Shedding
   description: |
     Proactive load management to prevent exceeding power capacity limits.
 
@@ -181,7 +181,7 @@ blueprint:
             `required`
 
             Input text helper to track which loads are currently shed by automation.
-            Stores JSON array of load names (e.g., ["Water Heater", "EV Charger"]).
+            Stores JSON array of entity IDs (e.g., ["climate.bedroom", "switch.ev_charger"]).
 
             **Initialize as empty string.**
 
@@ -321,6 +321,11 @@ action:
       {# Validate no duplicate primary entities #}
       {% set primary_entities = managed_loads | map(attribute='primary_entity') | list %}
       {% if primary_entities | unique | list | length != primary_entities | length %}
+        {{ false }}
+      {% endif %}
+
+      {# Validate restoration margin is lower than safety margin #}
+      {% if restoration_margin >= safety_margin %}
         {{ false }}
       {% endif %}
 
@@ -506,72 +511,75 @@ action:
           - variables:
               candidates_to_restore: >-
                 {% set ns = namespace(candidates=[]) %}
+
+                {# Build lookup dictionary once - O(M) #}
+                {% set load_lookup = namespace(dict={}) %}
+                {% for load in managed_loads %}
+                  {% set _ = load_lookup.dict.__setitem__(load.primary_entity, {
+                    'load': load,
+                    'index': loop.index0
+                  }) %}
+                {% endfor %}
+
+                {# Lookup each shed load - O(N) instead of O(N×M) #}
                 {% for entity_id in currently_shed_loads %}
-                  {# Find load object by primary_entity #}
-                  {% set load_index = namespace(value=-1) %}
-                  {% set load = namespace(obj=none) %}
-                  {% for l in managed_loads %}
-                    {% if l.primary_entity == entity_id %}
-                      {% set load.obj = l %}
-                      {% set load_index.value = loop.index0 %}
+                  {# Direct lookup instead of nested loop #}
+                  {% if entity_id in load_lookup.dict %}
+                    {% set load_info = load_lookup.dict[entity_id] %}
+                    {% set load_obj = load_info['load'] %}
+                    {% set load_index = load_info['index'] %}
+
+                    {% set primary_entity = load_obj.primary_entity %}
+                    {% set control_switch = load_obj.get('control_switch', '') %}
+                    {% set max_power = load_obj.max_power | float(0) %}
+
+                    {# Skip if max_power invalid #}
+                    {% if max_power <= 0 %}
+                      {% continue %}
                     {% endif %}
-                  {% endfor %}
 
-                  {# Skip if load not found (removed from config) #}
-                  {% if load.obj is none %}
-                    {% continue %}
-                  {% endif %}
-
-                  {% set primary_entity = load.obj.primary_entity %}
-                  {% set control_switch = load.obj.get('control_switch', '') %}
-                  {% set max_power = load.obj.max_power | float(0) %}
-
-                  {# Skip if max_power invalid #}
-                  {% if max_power <= 0 %}
-                    {% continue %}
-                  {% endif %}
-
-                  {# Determine control entity #}
-                  {% if control_switch and control_switch | length > 0 %}
-                    {% set control_entity = control_switch %}
-                  {% else %}
-                    {% set control_entity = primary_entity %}
-                  {% endif %}
-
-                  {# Validate control entity exists #}
-                  {% if states(control_entity) in ['unknown', 'unavailable'] %}
-                    {% continue %}
-                  {% endif %}
-
-                  {# Determine if load is OFF based on primary entity type #}
-                  {% set is_load_off = namespace(value=false) %}
-                  {% set entity_domain = primary_entity.split('.')[0] %}
-
-                  {% if entity_domain == 'climate' %}
-                    {# For climate: check hvac_action attribute #}
-                    {% set hvac_action = state_attr(primary_entity, 'hvac_action') %}
-                    {% if hvac_action in ['idle', 'off'] or hvac_action is none %}
-                      {% set is_load_off.value = true %}
+                    {# Determine control entity #}
+                    {% if control_switch and control_switch | length > 0 %}
+                      {% set control_entity = control_switch %}
+                    {% else %}
+                      {% set control_entity = primary_entity %}
                     {% endif %}
-                  {% elif entity_domain == 'switch' %}
-                    {# For switch: check state #}
-                    {% if is_state(primary_entity, 'off') %}
-                      {% set is_load_off.value = true %}
+
+                    {# Validate control entity exists #}
+                    {% if states(control_entity) in ['unknown', 'unavailable'] %}
+                      {% continue %}
                     {% endif %}
-                  {% endif %}
 
-                  {# Skip if load is not OFF #}
-                  {% if not is_load_off.value %}
-                    {% continue %}
-                  {% endif %}
+                    {# Determine if load is OFF based on primary entity type #}
+                    {% set is_load_off = namespace(value=false) %}
+                    {% set entity_domain = primary_entity.split('.')[0] %}
 
-                  {# Add to candidates #}
-                  {% set ns.candidates = ns.candidates + [{
-                    'entity_id': primary_entity,
-                    'index': load_index.value,
-                    'power': max_power,
-                    'control': control_entity
-                  }] %}
+                    {% if entity_domain == 'climate' %}
+                      {# For climate: check hvac_action attribute #}
+                      {% set hvac_action = state_attr(primary_entity, 'hvac_action') %}
+                      {% if hvac_action in ['idle', 'off'] or hvac_action is none %}
+                        {% set is_load_off.value = true %}
+                      {% endif %}
+                    {% elif entity_domain == 'switch' %}
+                      {# For switch: check state #}
+                      {% if is_state(primary_entity, 'off') %}
+                        {% set is_load_off.value = true %}
+                      {% endif %}
+                    {% endif %}
+
+                    {# Skip if load is not OFF #}
+                    {% if not is_load_off.value %}
+                      {% continue %}
+                    {% endif %}
+
+                    {# Add to candidates #}
+                    {% set ns.candidates = ns.candidates + [{
+                      'entity_id': primary_entity,
+                      'index': load_index,
+                      'power': max_power,
+                      'control': control_entity
+                    }] %}
+                  {% endif %}
                 {% endfor %}
 
                 {# Sort by index (ascending) then power (ascending) #}
