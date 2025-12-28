@@ -553,7 +553,7 @@ action:
                 target:
                   entity_id: "{{ last_action_datetime }}"
                 data:
-                  datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+                  datetime: "{{ now() }}"
 
   # STEP 6: RESTORATION MODE
   - if:
@@ -700,7 +700,7 @@ action:
                 target:
                   entity_id: "{{ last_action_datetime }}"
                 data:
-                  datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+                  datetime: "{{ now() }}"
 
 mode: queued
 max: 10
