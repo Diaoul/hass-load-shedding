@@ -273,7 +273,8 @@ variables:
     {% endif %}
 
   # Last action timestamp
-  last_action_time: "{{ states(last_action_datetime) | as_datetime | as_local | as_timestamp }}"
+  last_action_time: >-
+    {{ states(last_action_datetime) | as_datetime | as_local | as_timestamp }}
 
   # Time since last action
   seconds_since_last_action: >-
