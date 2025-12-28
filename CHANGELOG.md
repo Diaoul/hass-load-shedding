@@ -14,8 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 5-level priority system (Critical, High, Medium, Low, Very Low)
 - Priority-based restoration (highest priority first)
 - Anti-flapping protection with hysteresis and time delays
-- Flexible configuration via input helpers
-- Manual overrides (global disable + per-load exemptions)
+- Structured load configuration using object selector (HA 2025.7+)
+- Per-load exemption from shedding
+- Manual override to globally disable load shedding
 - State persistence across HA restarts
+- Configuration validation (duplicate names/switches)
+- Automatic cleanup of orphaned loads from tracker
 - MIT License
 - CHANGELOG.md for tracking version history
+
+### Requirements
+- Home Assistant 2025.7.0 or later (for object selector support)

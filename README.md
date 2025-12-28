@@ -2,7 +2,9 @@
 
 A smart, reliable Home Assistant blueprint for managing electrical loads to prevent exceeding power capacity limits.
 
-[![Import Load Shedding Blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2FDiaoul%2Fhass-load-shedding%2Fmain%2Fload_shedding_control.yaml)
+**Requirements:** Home Assistant 2025.7.0 or later
+
+[![Import Load Shedding Blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2FDiaoul%2Fhass-load-shedding%2Fmain%2Fload_shedding.yaml)
 
 Intelligent, priority-based electrical load management to prevent exceeding power capacity limits. Perfect for homes with limited electrical capacity, solar installations, or time-of-use tariffs.
 
@@ -14,7 +16,7 @@ Intelligent, priority-based electrical load management to prevent exceeding powe
 - 🔄 **Intelligent Restoration** - Restores highest-priority loads first when power budget available
 - 🚫 **Anti-Flapping Protection** - Prevents rapid on/off cycling with hysteresis and time delays
 - 🔓 **Manual Overrides** - Global disable switch and per-load exemptions
-- 📊 **Flexible Configuration** - Use input helpers for unlimited loads
+- 📝 **Structured Configuration** - Simple form-based setup with no input helpers needed per load
 
 ## 🚀 Quick Start
 
@@ -29,39 +31,17 @@ You need:
 
 ### Setup Steps
 
-#### 1. Create Input Helpers
+#### 1. Create Tracking Helpers (One-Time Setup)
 
-For each load you want to manage, create **3 helpers in the same order**:
+Create **2 global helpers** to track automation state:
 
 Go to **Settings** → **Devices & Services** → [**Helpers**](https://my.home-assistant.io/redirect/helpers/)
-
-**Example for Water Heater:**
-
-1. **Priority** (Input Select):
-   - Name: `Load Priority - Water Heater`
-   - Entity ID: `input_select.load_priority_water_heater`
-   - Options: `Critical`, `High`, `Medium`, `Low`, `Very Low`
-
-2. **Switch Entity** (Input Text):
-   - Name: `Load Switch - Water Heater`
-   - Entity ID: `input_text.load_switch_water_heater`
-   - Initial value: `switch.water_heater`
-
-3. **Power Sensor** (Input Text):
-   - Name: `Load Power - Water Heater`
-   - Entity ID: `input_text.load_power_water_heater`
-   - Initial value: `sensor.water_heater_power`
-
-**Repeat for each load** (EV charger, heat pump, dishwasher, etc.)
-
-#### 2. Create Global Tracking Helpers
-
-Create **2 global helpers** (one-time setup):
 
 1. **Shed Tracker** (Input Text):
    - Name: `Load Shedding - Shed Tracker`
    - Entity ID: `input_text.load_shedding_shed_tracker`
    - Initial value: *(leave empty)*
+   - Max length: 255 (or higher if managing many loads)
 
 2. **Last Action Time** (Input DateTime):
    - Name: `Load Shedding - Last Action`
@@ -69,9 +49,11 @@ Create **2 global helpers** (one-time setup):
    - Has date: ✅ Enabled
    - Has time: ✅ Enabled
 
-#### 3. Configure Blueprint
+#### 2. Import and Configure Blueprint
 
-Create automation from blueprint and configure:
+1. Click the import button at the top of this README
+2. Create automation from blueprint
+3. Configure each section:
 
 **Power Monitoring:**
 - Total Power Sensor: `sensor.linky_power`
@@ -79,18 +61,39 @@ Create automation from blueprint and configure:
 - Safety Margin: `90` % (shed at 8100W)
 - Restoration Margin: `80` % (restore when under 7200W)
 
-**Load Configuration:**
-- Load Priority Selects: Select all priority input_selects **in order**
-- Load Switch Texts: Select all switch text inputs **in order**
-- Load Power Texts: Select all power text inputs **in order**
+**Managed Loads:**
+
+Click "Add Load" for each load you want to manage:
+
+**Example: Water Heater**
+- Name: `Water Heater`
+- Switch Entity: `switch.water_heater`
+- Power Sensor: `sensor.water_heater_power`
+- Priority: `Low`
+- Exempt from Shedding: *(unchecked)*
+
+**Example: EV Charger**
+- Name: `EV Charger`
+- Switch Entity: `switch.ev_charger`
+- Power Sensor: `sensor.ev_charger_power`
+- Priority: `Medium`
+- Exempt from Shedding: *(unchecked)*
+
+**Example: Heat Pump**
+- Name: `Heat Pump`
+- Switch Entity: `switch.heat_pump`
+- Power Sensor: `sensor.heat_pump_power`
+- Priority: `High`
+- Exempt from Shedding: *(unchecked)*
+
+Repeat for all loads.
 
 **Tracking Helpers:**
 - Shed Tracker: `input_text.load_shedding_shed_tracker`
 - Last Action DateTime: `input_datetime.load_shedding_last_action`
 
 **Optional:**
-- Per-Load Exemption Toggles: Create input_boolean for loads you want to exempt
-- Disable Load Shedding: Global on/off switch
+- Disable Load Shedding: Create `input_boolean.disable_load_shedding` to globally disable
 
 ## 🧠 How It Works
 
@@ -167,10 +170,12 @@ Create automation from blueprint and configure:
 ## 🤝 Support
 
 If you encounter issues:
-- Verify helper configuration (check entity IDs in input_text helpers)
-- Test templates in **Developer Tools** → **Template**
+- **Validation errors:** Check for duplicate load names or duplicate switch entities
+- **Loads not shedding:** Verify priority levels (Critical loads never shed) and check switch/sensor entities are valid
+- **HA version:** Ensure you're running Home Assistant 2025.7.0 or later
 - Review automation traces in **Settings** → **Automations & Scenes** → _your automation_ → **Traces**
 - Check tracker state in **Developer Tools** → **States** → `input_text.load_shedding_shed_tracker`
+  - Should contain JSON array of load names: `["Water Heater", "EV Charger"]`
 - Open an issue on [GitHub](https://github.com/Diaoul/hass-load-shedding/issues)
 
 ---

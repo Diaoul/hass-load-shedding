@@ -10,7 +10,7 @@ blueprint:
     - 🛡️ Configurable safety margins
     - 🚫 Anti-flapping protection
     - 🔓 Manual override support
-    - 📊 Per-load configuration via input helpers
+    - 📝 Structured load configuration
 
     **How it works:**
     1. Monitors total power consumption (e.g., from Linky meter)
@@ -18,7 +18,9 @@ blueprint:
     3. Restores highest-priority loads when power drops (default: 80%)
     4. Prevents rapid on/off cycling with time delays and hysteresis
 
-    **Configuration:** Create input helpers for each load you want to manage. See documentation for helper setup guide.
+    **Configuration:** Use the structured load form - only 2 global helpers required.
+
+    **Requirements:** Home Assistant 2025.7.0 or later
   domain: automation
   input:
     power_monitoring:
@@ -83,51 +85,74 @@ blueprint:
       icon: mdi:lightning-bolt-circle
       collapsed: false
       input:
-        load_priority_selects:
-          name: 🎯 Load Priority Input Selects
+        managed_loads:
+          name: 🎯 Managed Loads
           description: |
-            Input select helpers defining priority for each load.
-            Create one per load with options: Critical, High, Medium, Low, Very Low
+            Configure each load you want to manage.
+            Click "Add Item" to add a new load.
 
-            **Important:** Critical loads are NEVER shed automatically.
+            **Priority levels:**
+            - Critical: Never shed automatically
+            - High: Essential comfort (heating/cooling)
+            - Medium: Important but deferrable (EV, water heater)
+            - Low: Nice to have (dishwasher, laundry)
+            - Very Low: Lowest priority (pool pump)
 
-            **Create helpers** [here](https://my.home-assistant.io/redirect/helpers/).
+            **Exempt from Shedding:** When enabled, load behaves like Critical priority.
           default: []
           selector:
-            entity:
-              filter:
-                - domain: input_select
+            object:
               multiple: true
+              label_field: name
+              fields:
+                name:
+                  label: Load Name
+                  description: Friendly name for this load (e.g., "Water Heater", "EV Charger")
+                  required: true
+                  selector:
+                    text:
 
-        load_switch_texts:
-          name: 🔌 Load Switch Entity ID Inputs
-          description: |
-            Input text helpers containing the switch entity ID for each load.
+                switch_entity:
+                  label: Switch Entity
+                  description: Switch entity to control this load
+                  required: true
+                  selector:
+                    entity:
+                      domain: switch
+                      multiple: false
 
-            **Must be in same order as priority selects!**
+                power_sensor:
+                  label: Power Sensor
+                  description: Sensor measuring this load's power consumption
+                  required: true
+                  selector:
+                    entity:
+                      domain: sensor
+                      device_class: power
+                      multiple: false
 
-            Example value: "switch.water_heater"
-          default: []
-          selector:
-            entity:
-              filter:
-                - domain: input_text
-              multiple: true
+                priority:
+                  label: Priority
+                  description: Shedding priority (Critical loads are never shed)
+                  required: true
+                  default: Medium
+                  selector:
+                    select:
+                      options:
+                        - Critical
+                        - High
+                        - Medium
+                        - Low
+                        - Very Low
+                      mode: dropdown
 
-        load_power_sensor_texts:
-          name: 📊 Load Power Sensor Entity ID Inputs
-          description: |
-            Input text helpers containing the power sensor entity ID for each load.
-
-            **Must be in same order as priority selects!**
-
-            Example value: "sensor.water_heater_power"
-          default: []
-          selector:
-            entity:
-              filter:
-                - domain: input_text
-              multiple: true
+                exempt_from_shedding:
+                  label: Exempt from Shedding
+                  description: When enabled, this load will never be shed (like Critical priority)
+                  required: false
+                  default: false
+                  selector:
+                    boolean:
 
     timing_and_stability:
       name: Timing & Stability
@@ -174,7 +199,11 @@ blueprint:
       input:
         load_shedding_disable:
           name: 🛑 Disable Load Shedding
-          description: Toggle to completely disable load shedding (all loads operate normally, all shed loads are restored)
+          description: |
+            Toggle to completely disable load shedding.
+            When enabled, all shed loads are immediately restored.
+
+            Create a helper [here](https://my.home-assistant.io/redirect/helpers/).
           default: []
           selector:
             entity:
@@ -184,21 +213,6 @@ blueprint:
                     - switch
                     - binary_sensor
               multiple: false
-
-        load_exemption_booleans:
-          name: 🔓 Per-Load Exemption Toggles
-          description: |
-            Optional input boolean helpers to exempt specific loads from shedding.
-
-            **Must be in same order as priority selects!**
-
-            When ON, that load will never be shed (similar to Critical priority).
-          default: []
-          selector:
-            entity:
-              filter:
-                - domain: input_boolean
-              multiple: true
 
     tracking_helpers:
       name: Tracking Helpers (Required)
@@ -211,7 +225,7 @@ blueprint:
             `required`
 
             Input text helper to track which loads are currently shed by automation.
-            Used to prevent rapid cycling and track state across HA restarts.
+            Stores JSON array of load names (e.g., ["Water Heater", "EV Charger"]).
 
             **Initialize as empty string.**
 
@@ -240,21 +254,26 @@ blueprint:
               multiple: false
 
 variables:
-  # Input assignments
+  # Input assignments - power monitoring
   total_power_sensor: !input total_power_sensor
   max_power: !input max_power_capacity
   safety_margin: !input safety_margin_percent
   restoration_margin: !input restoration_margin_percent
-  load_priority_selects: !input load_priority_selects
-  load_switch_texts: !input load_switch_texts
-  load_power_sensor_texts: !input load_power_sensor_texts
-  load_exemption_booleans: !input load_exemption_booleans
-  load_shedding_disable: !input load_shedding_disable
-  shed_loads_tracker: !input shed_loads_tracker
-  last_action_datetime: !input last_action_datetime
-  minimum_shed_duration: !input minimum_shed_duration
+
+  # Input assignments - loads
+  managed_loads: !input managed_loads
+
+  # Input assignments - timing
   shedding_delay: !input shedding_delay
   restoration_delay: !input restoration_delay
+  minimum_shed_duration: !input minimum_shed_duration
+
+  # Input assignments - overrides
+  load_shedding_disable: !input load_shedding_disable
+
+  # Input assignments - tracking
+  shed_loads_tracker: !input shed_loads_tracker
+  last_action_datetime: !input last_action_datetime
 
   # Calculated thresholds
   shedding_threshold: "{{ (max_power * (safety_margin / 100)) | int }}"
@@ -265,7 +284,7 @@ variables:
   load_shedding_disabled: >-
     {{ load_shedding_disable | length > 0 and is_state(load_shedding_disable, 'on') }}
 
-  # Currently shed loads list (parse JSON from tracker)
+  # Currently shed loads list (parse JSON array of load names)
   currently_shed_loads: >-
     {% set shed_json = states(shed_loads_tracker) %}
     {% if shed_json in ['', 'unknown', 'unavailable'] %}
@@ -316,16 +335,6 @@ trigger:
     entity_id: !input load_shedding_disable
     id: override_changed
 
-  # Trigger when any load exemption changes
-  - trigger: state
-    entity_id: !input load_exemption_booleans
-    id: exemption_changed
-
-  # Trigger when any load priority changes
-  - trigger: state
-    entity_id: !input load_priority_selects
-    id: priority_changed
-
 condition: []
 
 action:
@@ -356,6 +365,30 @@ action:
             data:
               datetime: "1970-01-01 00:00:00"
 
+      # Clean up orphaned load names from tracker
+      - variables:
+          valid_load_names: "{{ managed_loads | map(attribute='name') | list }}"
+          current_shed_loads_list: >-
+            {% set shed_json = states(shed_loads_tracker) %}
+            {% if shed_json in ['', 'unknown', 'unavailable'] %}
+              []
+            {% else %}
+              {{ shed_json | from_json | default([]) }}
+            {% endif %}
+          cleaned_shed_loads: >-
+            {{ current_shed_loads_list | select('in', valid_load_names) | list }}
+
+      # Update tracker if we removed any orphans
+      - if:
+          - condition: template
+            value_template: "{{ current_shed_loads_list | length != cleaned_shed_loads | length }}"
+        then:
+          - service: input_text.set_value
+            target:
+              entity_id: "{{ shed_loads_tracker }}"
+            data:
+              value: "{{ cleaned_shed_loads | to_json }}"
+
   # STEP 2: If load shedding disabled, restore all and exit
   - if:
       - condition: template
@@ -363,16 +396,22 @@ action:
     then:
       # Restore all currently shed loads
       - repeat:
-          count: "{{ currently_shed_loads | length }}"
+          for_each: "{{ currently_shed_loads }}"
           sequence:
+            # Find load object by name
             - variables:
-                load_index: "{{ currently_shed_loads[repeat.index - 1] }}"
-                switch_entity_id_text: "{{ load_switch_texts[load_index] }}"
-                switch_entity: "{{ states(switch_entity_id_text) }}"
+                load_name: "{{ repeat.item }}"
+                load: >-
+                  {{ managed_loads | selectattr('name', 'eq', load_name) | first | default(none) }}
+                switch_entity: "{{ load.switch_entity if load is not none else none }}"
 
-            # Validate switch entity
+            # Validate load found and switch exists
             - condition: template
-              value_template: "{{ switch_entity not in ['', 'unknown', 'unavailable'] }}"
+              value_template: "{{ load is not none and switch_entity is not none }}"
+
+            # Validate switch entity state
+            - condition: template
+              value_template: "{{ states(switch_entity) in ['on', 'off'] }}"
 
             # Turn on switch if currently off
             - if:
@@ -395,9 +434,23 @@ action:
   # STEP 3: Validate configuration
   - condition: template
     value_template: >-
-      {{ load_priority_selects | length > 0
-         and load_switch_texts | length == load_priority_selects | length
-         and load_power_sensor_texts | length == load_priority_selects | length }}
+      {% if managed_loads | length == 0 %}
+        {{ false }}
+      {% endif %}
+
+      {# Validate no duplicate load names #}
+      {% set load_names = managed_loads | map(attribute='name') | list %}
+      {% if load_names | unique | list | length != load_names | length %}
+        {{ false }}
+      {% endif %}
+
+      {# Validate no duplicate switch entities #}
+      {% set switches = managed_loads | map(attribute='switch_entity') | list %}
+      {% if switches | unique | list | length != switches | length %}
+        {{ false }}
+      {% endif %}
+
+      {{ true }}
 
   # STEP 4: Determine mode (shedding or restoration)
   - variables:
@@ -410,7 +463,6 @@ action:
         value_template: "{{ power_over_shedding_threshold }}"
     then:
       # Wait for shedding delay to prevent transient spike reactions
-      # Only enforce delay for power_changed trigger
       - if:
           - condition: template
             value_template: "{{ trigger.id == 'power_changed' }}"
@@ -429,13 +481,12 @@ action:
           - variables:
               candidates_to_shed: >-
                 {% set ns = namespace(candidates=[]) %}
-                {% for i in range(load_priority_selects | length) %}
-                  {% set priority = states(load_priority_selects[i]) %}
-                  {% set switch_entity_id_text = load_switch_texts[i] %}
-                  {% set switch_entity = states(switch_entity_id_text) %}
-                  {% set power_sensor_text = load_power_sensor_texts[i] %}
-                  {% set power_sensor = states(power_sensor_text) %}
-                  {% set exempted = load_exemption_booleans | length > i and is_state(load_exemption_booleans[i], 'on') %}
+                {% for load in managed_loads %}
+                  {% set load_name = load.name %}
+                  {% set priority = load.priority %}
+                  {% set switch_entity = load.switch_entity %}
+                  {% set power_sensor = load.power_sensor %}
+                  {% set exempted = load.exempt_from_shedding | default(false) %}
 
                   {# Skip Critical priority loads (never shed) #}
                   {% if priority == 'Critical' %}
@@ -447,8 +498,8 @@ action:
                     {% continue %}
                   {% endif %}
 
-                  {# Skip if switch entity is invalid #}
-                  {% if switch_entity in ['', 'unknown', 'unavailable'] %}
+                  {# Skip if switch entity invalid #}
+                  {% if not states(switch_entity) in ['on', 'off'] %}
                     {% continue %}
                   {% endif %}
 
@@ -457,11 +508,17 @@ action:
                     {% continue %}
                   {% endif %}
 
+                  {# Skip if power sensor unavailable #}
+                  {% set power_state = states(power_sensor) %}
+                  {% if power_state in ['unknown', 'unavailable', ''] %}
+                    {% continue %}
+                  {% endif %}
+
                   {# Add to candidates #}
-                  {% set load_power = states(power_sensor) | float(0) %}
+                  {% set load_power = power_state | float(0) %}
                   {% set priority_rank = priority_rank_map[priority] | default(1) %}
                   {% set ns.candidates = ns.candidates + [{
-                    'index': i,
+                    'name': load_name,
                     'priority_rank': priority_rank,
                     'power': load_power,
                     'switch': switch_entity
@@ -477,7 +534,7 @@ action:
 
           # Shed loads iteratively
           - variables:
-              shed_indices: []
+              shed_names: []
               remaining_deficit: "{{ power_deficit }}"
 
           - repeat:
@@ -494,16 +551,16 @@ action:
 
                 # Track this shed load
                 - variables:
-                    shed_indices: "{{ shed_indices + [repeat.item.index] }}"
+                    shed_names: "{{ shed_names + [repeat.item.name] }}"
                     remaining_deficit: "{{ (remaining_deficit - repeat.item.power) | float }}"
 
           # Update tracker with newly shed loads
           - if:
               - condition: template
-                value_template: "{{ shed_indices | length > 0 }}"
+                value_template: "{{ shed_names | length > 0 }}"
             then:
               - variables:
-                  all_shed_loads: "{{ (currently_shed_loads + shed_indices) | unique | list }}"
+                  all_shed_loads: "{{ (currently_shed_loads + shed_names) | unique | list }}"
 
               - service: input_text.set_value
                 target:
@@ -546,15 +603,22 @@ action:
           - variables:
               candidates_to_restore: >-
                 {% set ns = namespace(candidates=[]) %}
-                {% for index in currently_shed_loads %}
-                  {% set priority = states(load_priority_selects[index]) %}
-                  {% set switch_entity_id_text = load_switch_texts[index] %}
-                  {% set switch_entity = states(switch_entity_id_text) %}
-                  {% set power_sensor_text = load_power_sensor_texts[index] %}
-                  {% set power_sensor = states(power_sensor_text) %}
+                {% for load_name in currently_shed_loads %}
+                  {# Find the load object by name #}
+                  {% set load = managed_loads | selectattr('name', 'eq', load_name) | first | default(none) %}
 
-                  {# Skip if switch entity is invalid #}
-                  {% if switch_entity in ['', 'unknown', 'unavailable'] %}
+                  {# Skip if load not found (was removed from config) #}
+                  {% if load is none %}
+                    {% continue %}
+                  {% endif %}
+
+                  {# Extract load properties #}
+                  {% set priority = load.priority %}
+                  {% set switch_entity = load.switch_entity %}
+                  {% set power_sensor = load.power_sensor %}
+
+                  {# Validate switch entity exists #}
+                  {% if not states(switch_entity) in ['on', 'off'] %}
                     {% continue %}
                   {% endif %}
 
@@ -563,11 +627,17 @@ action:
                     {% continue %}
                   {% endif %}
 
+                  {# Skip if power sensor unavailable #}
+                  {% set power_state = states(power_sensor) %}
+                  {% if power_state in ['unknown', 'unavailable', ''] %}
+                    {% continue %}
+                  {% endif %}
+
                   {# Add to candidates #}
-                  {% set load_power = states(power_sensor) | float(0) %}
+                  {% set load_power = power_state | float(0) %}
                   {% set priority_rank = priority_rank_map[priority] | default(1) %}
                   {% set ns.candidates = ns.candidates + [{
-                    'index': index,
+                    'name': load_name,
                     'priority_rank': priority_rank,
                     'power': load_power,
                     'switch': switch_entity
@@ -584,7 +654,7 @@ action:
           # Restore loads iteratively
           - variables:
               power_accumulator: "{{ current_power_after_delay }}"
-              restored_indices: []
+              restored_names: []
 
           - repeat:
               for_each: "{{ candidates_to_restore }}"
@@ -601,16 +671,16 @@ action:
                 # Track restoration
                 - variables:
                     power_accumulator: "{{ (power_accumulator + repeat.item.power) | float }}"
-                    restored_indices: "{{ restored_indices + [repeat.item.index] }}"
+                    restored_names: "{{ restored_names + [repeat.item.name] }}"
 
           # Update tracker (remove restored loads)
           - if:
               - condition: template
-                value_template: "{{ restored_indices | length > 0 }}"
+                value_template: "{{ restored_names | length > 0 }}"
             then:
               - variables:
                   remaining_shed_loads: >-
-                    {{ currently_shed_loads | reject('in', restored_indices) | list }}
+                    {{ currently_shed_loads | reject('in', restored_names) | list }}
 
               - service: input_text.set_value
                 target:
