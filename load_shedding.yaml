@@ -110,7 +110,7 @@ blueprint:
             - **Primary Entity**: Climate or switch that indicates load status
               - Climate: Sheds when hvac_action is 'heating'/'cooling' (or sensor-based if configured)
               - Switch: Sheds when state is 'on'
-            - **Control Switch** (optional): Switch to actually control the load
+            - **Control Switch** (optional): Switch or input_boolean to actually control the load
               - If set: Uses this switch for on/off control
               - If empty: Controls primary entity directly
             - **Estimated Power**: Rated power consumption in Watts
@@ -136,7 +136,9 @@ blueprint:
                   label: Control Switch (Optional)
                   selector:
                     entity:
-                      domain: switch
+                      filter:
+                        - domain: switch
+                        - domain: input_boolean
                       multiple: false
 
                 max_power:

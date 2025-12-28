@@ -244,8 +244,10 @@ template:
 
 **Control Switch** (optional) provides separate control:
 
-- **When to use**: You want to cut power via a different switch than the status indicator
+- **Accepts**: Switch or input_boolean entities
+- **When to use**: You want to cut power via a different entity than the status indicator
   - Example: Monitor `climate.bedroom` but control via `switch.bedroom_breaker`
+  - Example: Monitor `sensor.ev_charging_power` but control via `input_boolean.ev_charging_allowed`
 - **When to skip**: Direct control of primary entity is fine
   - Example: `switch.pool_pump` can be controlled directly
 
@@ -311,8 +313,9 @@ How the blueprint determines if a load is ON or OFF:
 
 **Control Switch (Optional):**
 - **Primary Entity**: Used to detect load state (is it consuming power?)
-- **Control Switch**: Used to actually turn load on/off
+- **Control Switch**: Used to actually turn load on/off (accepts switch or input_boolean)
 - **Example**: Monitor `climate.bedroom` status, control via `switch.bedroom_breaker`
+- **Example**: Monitor power sensor, control via `input_boolean.charging_allowed`
 - **When to use**: Status entity differs from control entity
 - **When to skip**: Primary entity can be controlled directly
 
