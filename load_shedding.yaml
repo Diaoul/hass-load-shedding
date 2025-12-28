@@ -137,12 +137,6 @@ blueprint:
 
                 climate_detection:
                   label: Climate Detection Method (Optional)
-                  description: |
-                    How to detect if climate entity is ON. Only applies to climate entities.
-
-                    - **hvac_action**: Check hvac_action attribute (accurate - default)
-                    - **sensor_based**: Use hvac_mode + temperature sensors (fallback for broken thermostats)
-                  default: hvac_action
                   selector:
                     select:
                       options:
