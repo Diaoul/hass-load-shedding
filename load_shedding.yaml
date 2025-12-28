@@ -3,6 +3,8 @@ blueprint:
   description: |
     Proactive load management to prevent exceeding power capacity limits.
 
+    Supports dynamic capacity via sensor input (e.g., solar + grid limit, time-of-use).
+
     **Features:**
     - ⚡ Real-time power monitoring
     - 🎯 Order-based priority (unlimited levels)
@@ -29,7 +31,10 @@ blueprint:
       input:
         total_power_sensor:
           name: 📊 Total Power Consumption Sensor
-          description: Sensor measuring total household power consumption (e.g., Linky meter, whole-home energy monitor)
+          description: |
+            Sensor measuring total household power consumption (e.g., Linky meter, whole-home energy monitor).
+
+            If your meter reports VA (apparent power) instead of W (real power), create a template sensor to convert using your power factor.
           selector:
             entity:
               filter:
@@ -37,17 +42,26 @@ blueprint:
                   device_class: power
               multiple: false
 
-        max_power_capacity:
-          name: 🔌 Maximum Power Capacity
-          description: Maximum power capacity in Watts (e.g., 9000W for 45A @ 230V single-phase, 12000W for 60A)
-          default: 9000
+        max_power_sensor:
+          name: ⚡ Max Power Capacity Sensor
+          description: |
+            Sensor or helper reporting maximum power capacity in Watts.
+
+            Can be static (input_number helper) or dynamic (template sensor).
+
+            **Static capacity:**
+            - Create input_number helper with fixed value (e.g., 9000)
+
+            **Dynamic capacity examples:**
+            - Solar + Grid: Template sensor with `9000 + solar_power`
+            - Time-of-use: Different limits by hour (off-peak vs peak)
+            - Battery state: Higher limit when battery charged
           selector:
-            number:
-              min: 1000
-              max: 50000
-              step: 100
-              unit_of_measurement: "W"
-              mode: box
+            entity:
+              filter:
+                - domain: sensor
+                - domain: input_number
+              multiple: false
 
         safety_margin_percent:
           name: 🛡️ Safety Margin Percentage
@@ -225,9 +239,12 @@ blueprint:
 variables:
   # Input assignments - power monitoring
   total_power_sensor: !input total_power_sensor
-  max_power: !input max_power_capacity
+  max_power_sensor: !input max_power_sensor
   safety_margin: !input safety_margin_percent
   restoration_margin: !input restoration_margin_percent
+
+  # Get max power from sensor (can be input_number or template sensor)
+  max_power: "{{ states(max_power_sensor) | float(0) }}"
 
   # Input assignments - loads
   managed_loads: !input managed_loads

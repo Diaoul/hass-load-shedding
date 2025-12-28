@@ -60,9 +60,9 @@ Select your helpers in the **Tracking Helpers** section.
 ### 💡 Configuration Example
 
 **Power Monitoring:**
-- Total Power Sensor: `sensor.linky_power`
-- Max Capacity: `9000` W
-- Safety Margin: `90` % (shed at 8100W)
+- Total Power Sensor: `sensor.linky_power_watts` (your VA→W template sensor if needed)
+- Max Capacity Sensor: `input_number.max_capacity` (or template sensor for dynamic)
+- Safety Margin: `90` % (shed at 8100W if max is 9000W)
 - Restoration Margin: `80` % (restore when under 7200W)
 
 **Managed Loads:**
@@ -151,6 +151,85 @@ Priority is determined by the order of loads in your configuration:
 - **Safety Margin (90%)** - Higher = more proactive, lower = use more capacity
 - **Restoration Margin (80%)** - Must be lower than safety margin to prevent flapping
 - **Gap (10% default)** - Hysteresis prevents constant shed/restore cycles
+
+### Max Capacity Configuration
+
+The blueprint requires a **sensor or input_number** for max capacity. Choose based on your needs:
+
+#### Static Capacity (Simple)
+
+Create an **Input Number** helper for fixed capacity:
+
+1. Go to **Settings** → **Helpers** → **Create Helper** → **Number**
+2. Name: "Max Power Capacity"
+3. Minimum: 0, Maximum: 50000, Step: 100
+4. Unit: W
+5. Set value to your limit (e.g., 9000)
+
+#### Dynamic Capacity (Advanced)
+
+Create a **Template Sensor** for capacity that changes based on conditions.
+
+Add to your `configuration.yaml`:
+
+**Solar + Grid:**
+```yaml
+template:
+  - sensor:
+      - name: "Available Capacity"
+        unit_of_measurement: "W"
+        state: >-
+          {{ (9000 + states('sensor.solar_power')|float(0)) | int }}
+```
+*Capacity increases when solar is producing power*
+
+**Time-of-use:**
+```yaml
+template:
+  - sensor:
+      - name: "Available Capacity"
+        unit_of_measurement: "W"
+        state: >-
+          {% if now().hour >= 22 or now().hour < 6 %}
+            12000
+          {% else %}
+            9000
+          {% endif %}
+```
+*Higher limit during off-peak hours (10 PM - 6 AM)*
+
+**Battery state:**
+```yaml
+template:
+  - sensor:
+      - name: "Available Capacity"
+        unit_of_measurement: "W"
+        state: >-
+          {% set battery_soc = states('sensor.battery_soc')|float(0) %}
+          {% if battery_soc > 80 %}
+            12000
+          {% elif battery_soc > 50 %}
+            10000
+          {% else %}
+            9000
+          {% endif %}
+```
+*Capacity varies based on battery charge level*
+
+#### Converting VA to Watts
+
+If your meter reports VA (apparent power) instead of W (real power), create a conversion sensor:
+
+```yaml
+template:
+  - sensor:
+      - name: "Linky Power Watts"
+        unit_of_measurement: "W"
+        device_class: power
+        state: >-
+          {{ (states('sensor.linky_power_va')|float(0) * 0.95) | int }}
+```
+*Replace 0.95 with your measured power factor*
 
 ### Primary Entity vs Control Switch
 
