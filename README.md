@@ -26,7 +26,8 @@ You need:
 1. **Total power sensor** - Measures household consumption (e.g., `sensor.linky_power`)
 2. **Controllable loads** - Each needs:
    - Switch entity to turn load on/off
-   - Power sensor showing current consumption
+   - Estimated power consumption in Watts (rated power)
+   - (Optional) Status sensor to detect if load is currently ON
 3. **Max capacity** - Your electrical limit in Watts (e.g., 9000W for 45A @ 230V)
 
 ### Setup Steps
@@ -70,17 +71,20 @@ Click "Add Load" for each load you want to manage. **Priority is determined by o
 1. **Heat Pump** (highest priority - shed last)
    - Name: `Heat Pump`
    - Switch Entity: `switch.heat_pump`
-   - Power Sensor: `sensor.heat_pump_power`
+   - Estimated Power: `2000` W
+   - Status Sensor: `binary_sensor.heat_pump_running` (optional)
 
 2. **EV Charger** (medium priority)
    - Name: `EV Charger`
    - Switch Entity: `switch.ev_charger`
-   - Power Sensor: `sensor.ev_charger_power`
+   - Estimated Power: `7000` W
+   - Status Sensor: `binary_sensor.ev_charger_charging` (optional)
 
 3. **Water Heater** (lowest priority - shed first)
    - Name: `Water Heater`
    - Switch Entity: `switch.water_heater`
-   - Power Sensor: `sensor.water_heater_power`
+   - Estimated Power: `3000` W
+   - Status Sensor: *(leave empty if no sensor available)*
 
 Use drag & drop to reorder loads and adjust priorities.
 
@@ -163,6 +167,26 @@ Priority is determined by the order of loads in your configuration:
 - **Safety Margin (90%)** - Higher = more proactive, lower = use more capacity
 - **Restoration Margin (80%)** - Must be lower than safety margin to prevent flapping
 - **Gap (10% default)** - Hysteresis prevents constant shed/restore cycles
+
+### Status Sensors
+
+Status sensors help the blueprint determine if a load is actually consuming power:
+
+**When to use status sensors:**
+- Loads with built-in state reporting (e.g., `binary_sensor.ev_charger_charging`)
+- Smart plugs with power threshold binary sensors
+- Devices with separate "running" indicators (e.g., heat pump compressor status)
+
+**When you can skip status sensors:**
+- Simple loads where switch state = power state (e.g., resistive heaters)
+- Loads that always consume power when switch is on
+- Loads without available status feedback
+
+**How it works:**
+- **With status sensor:** Blueprint only sheds loads when status = 'on'
+  - Example: EV charger switch is on, but status sensor shows 'not charging' → Skip shedding
+- **Without status sensor:** Blueprint assumes switch state = power state
+  - Example: Water heater switch is on → Assume it's consuming its rated power
 
 ## 🤝 Support
 

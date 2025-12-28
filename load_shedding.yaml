@@ -114,12 +114,35 @@ blueprint:
                       domain: switch
                       multiple: false
 
-                power_sensor:
-                  label: Power Sensor
+                max_power:
+                  label: Estimated Power Consumption
+                  description: >
+                    Rated or estimated power consumption in Watts when this load is ON.
+                    This value is used for deficit calculations and restoration budgeting.
+                  selector:
+                    number:
+                      min: 1
+                      max: 50000
+                      step: 1
+                      unit_of_measurement: "W"
+                      mode: box
+
+                status_sensor:
+                  label: Status Sensor (Optional)
+                  description: >
+                    OPTIONAL: Binary sensor or sensor that indicates if this load is currently ON.
+
+                    - If provided: Only shed loads when status is 'on', skip when 'off'
+
+                    - If NOT provided: Always consider load as potential candidate
+
+                    Accepts binary_sensor (on/off) or regular sensor with 'on'/'off' states.
+                  default: ""
                   selector:
                     entity:
-                      domain: sensor
-                      device_class: power
+                      filter:
+                        - domain: binary_sensor
+                        - domain: sensor
                       multiple: false
 
     timing_and_stability:
@@ -445,30 +468,52 @@ action:
                   {% set load_name = load.name %}
                   {% set load_index = loop.index0 %}
                   {% set switch_entity = load.switch_entity %}
-                  {% set power_sensor = load.power_sensor %}
+                  {% set status_sensor = load.get('status_sensor', '') %}
+                  {% set max_power = load.max_power | float(0) %}
+
+                  {# Skip if max_power is invalid or zero #}
+                  {% if max_power <= 0 %}
+                    {% continue %}
+                  {% endif %}
 
                   {# Skip if switch entity invalid #}
                   {% if not states(switch_entity) in ['on', 'off'] %}
                     {% continue %}
                   {% endif %}
 
-                  {# Skip if already off #}
-                  {% if not is_state(switch_entity, 'on') %}
+                  {# Determine if load is currently ON #}
+                  {% set is_load_on = namespace(value=false) %}
+
+                  {% if status_sensor and status_sensor | length > 0 %}
+                    {# Status sensor provided - use it to determine state #}
+                    {% set status_state = states(status_sensor) %}
+
+                    {# Skip if status sensor unavailable/unknown #}
+                    {% if status_state in ['unknown', 'unavailable', ''] %}
+                      {% continue %}
+                    {% endif %}
+
+                    {# Check if status sensor reports ON #}
+                    {% if status_state in ['on', 'On', 'ON', '1', 'true', 'True'] %}
+                      {% set is_load_on.value = true %}
+                    {% endif %}
+                  {% else %}
+                    {# No status sensor - check switch entity state #}
+                    {% if is_state(switch_entity, 'on') %}
+                      {% set is_load_on.value = true %}
+                    {% endif %}
+                  {% endif %}
+
+                  {# Skip if load is not ON (nothing to shed) #}
+                  {% if not is_load_on.value %}
                     {% continue %}
                   {% endif %}
 
-                  {# Skip if power sensor unavailable #}
-                  {% set power_state = states(power_sensor) %}
-                  {% if power_state in ['unknown', 'unavailable', ''] %}
-                    {% continue %}
-                  {% endif %}
-
-                  {# Add to candidates #}
-                  {% set load_power = power_state | float(0) %}
+                  {# Add to candidates with max_power #}
                   {% set ns.candidates = ns.candidates + [{
                     'name': load_name,
                     'index': load_index,
-                    'power': load_power,
+                    'power': max_power,
                     'switch': switch_entity
                   }] %}
                 {% endfor %}
@@ -569,30 +614,52 @@ action:
 
                   {# Extract load properties #}
                   {% set switch_entity = load.obj.switch_entity %}
-                  {% set power_sensor = load.obj.power_sensor %}
+                  {% set status_sensor = load.obj.get('status_sensor', '') %}
+                  {% set max_power = load.obj.max_power | float(0) %}
+
+                  {# Skip if max_power invalid #}
+                  {% if max_power <= 0 %}
+                    {% continue %}
+                  {% endif %}
 
                   {# Validate switch entity exists #}
                   {% if not states(switch_entity) in ['on', 'off'] %}
                     {% continue %}
                   {% endif %}
 
-                  {# Skip if manually turned back on #}
-                  {% if is_state(switch_entity, 'on') %}
+                  {# Determine if load is currently OFF (eligible for restoration) #}
+                  {% set is_load_off = namespace(value=false) %}
+
+                  {% if status_sensor and status_sensor | length > 0 %}
+                    {# Status sensor provided - use it to determine state #}
+                    {% set status_state = states(status_sensor) %}
+
+                    {# Skip if status sensor unavailable/unknown #}
+                    {% if status_state in ['unknown', 'unavailable', ''] %}
+                      {% continue %}
+                    {% endif %}
+
+                    {# Check if status sensor reports OFF #}
+                    {% if status_state in ['off', 'Off', 'OFF', '0', 'false', 'False'] %}
+                      {% set is_load_off.value = true %}
+                    {% endif %}
+                  {% else %}
+                    {# No status sensor - check switch entity state #}
+                    {% if is_state(switch_entity, 'off') %}
+                      {% set is_load_off.value = true %}
+                    {% endif %}
+                  {% endif %}
+
+                  {# Skip if load is not OFF (manually turned on or already restored) #}
+                  {% if not is_load_off.value %}
                     {% continue %}
                   {% endif %}
 
-                  {# Skip if power sensor unavailable #}
-                  {% set power_state = states(power_sensor) %}
-                  {% if power_state in ['unknown', 'unavailable', ''] %}
-                    {% continue %}
-                  {% endif %}
-
-                  {# Add to candidates #}
-                  {% set load_power = power_state | float(0) %}
+                  {# Add to candidates with max_power #}
                   {% set ns.candidates = ns.candidates + [{
                     'name': load_name,
                     'index': load_index.value,
-                    'power': load_power,
+                    'power': max_power,
                     'switch': switch_entity
                   }] %}
                 {% endfor %}
