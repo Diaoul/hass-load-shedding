@@ -107,14 +107,12 @@ blueprint:
               fields:
                 name:
                   label: Load Name
-                  description: Friendly name for this load (e.g., "Water Heater", "EV Charger")
                   required: true
                   selector:
                     text:
 
                 switch_entity:
                   label: Switch Entity
-                  description: Switch entity to control this load
                   required: true
                   selector:
                     entity:
@@ -123,7 +121,6 @@ blueprint:
 
                 power_sensor:
                   label: Power Sensor
-                  description: Sensor measuring this load's power consumption
                   required: true
                   selector:
                     entity:
@@ -133,9 +130,7 @@ blueprint:
 
                 priority:
                   label: Priority
-                  description: Shedding priority (Critical loads are never shed)
                   required: true
-                  default: Medium
                   selector:
                     select:
                       options:
@@ -148,9 +143,7 @@ blueprint:
 
                 exempt_from_shedding:
                   label: Exempt from Shedding
-                  description: When enabled, this load will never be shed (like Critical priority)
                   required: false
-                  default: false
                   selector:
                     boolean:
 
