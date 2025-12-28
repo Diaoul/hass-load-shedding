@@ -25,9 +25,9 @@ Intelligent, priority-based electrical load management to prevent exceeding powe
 You need:
 1. **Total power sensor** - Measures household consumption (e.g., `sensor.linky_power`)
 2. **Controllable loads** - Each needs:
-   - Switch entity to turn load on/off
+   - Primary entity (climate or switch) to detect load status
    - Estimated power consumption in Watts (rated power)
-   - (Optional) Status sensor to detect if load is currently ON
+   - (Optional) Separate control switch for on/off control
 3. **Max capacity** - Your electrical limit in Watts (e.g., 9000W for 45A @ 230V)
 
 ### Setup Steps
@@ -69,22 +69,19 @@ Click "Add Load" for each load you want to manage. **Priority is determined by o
 **Example loads (in priority order - highest to lowest):**
 
 1. **Heat Pump** (highest priority - shed last)
-   - Name: `Heat Pump`
-   - Switch Entity: `switch.heat_pump`
+   - Primary Entity: `climate.living_room`
+   - Control Switch: `switch.heat_pump_breaker` (optional - to cut power)
    - Estimated Power: `2000` W
-   - Status Sensor: `binary_sensor.heat_pump_running` (optional)
 
 2. **EV Charger** (medium priority)
-   - Name: `EV Charger`
-   - Switch Entity: `switch.ev_charger`
+   - Primary Entity: `switch.ev_charger`
+   - Control Switch: *(leave empty - control switch directly)*
    - Estimated Power: `7000` W
-   - Status Sensor: `binary_sensor.ev_charger_charging` (optional)
 
 3. **Water Heater** (lowest priority - shed first)
-   - Name: `Water Heater`
-   - Switch Entity: `switch.water_heater`
+   - Primary Entity: `switch.water_heater`
+   - Control Switch: *(leave empty)*
    - Estimated Power: `3000` W
-   - Status Sensor: *(leave empty if no sensor available)*
 
 Use drag & drop to reorder loads and adjust priorities.
 
@@ -168,35 +165,33 @@ Priority is determined by the order of loads in your configuration:
 - **Restoration Margin (80%)** - Must be lower than safety margin to prevent flapping
 - **Gap (10% default)** - Hysteresis prevents constant shed/restore cycles
 
-### Status Sensors
+### Primary Entity vs Control Switch
 
-Status sensors help the blueprint determine if a load is actually consuming power:
+**Primary Entity** determines when the load is actually ON:
 
-**When to use status sensors:**
-- Loads with built-in state reporting (e.g., `binary_sensor.ev_charger_charging`)
-- Smart plugs with power threshold binary sensors
-- Devices with separate "running" indicators (e.g., heat pump compressor status)
+- **Climate entities**: Checks if `hvac_action` is 'heating' or 'cooling'
+  - Useful: Only sheds when climate is actively consuming power
+  - Example: `climate.living_room` won't shed if thermostat is idle
+- **Switch entities**: Checks if state is 'on'
+  - Simple loads that consume power when switch is on
+  - Example: `switch.water_heater`
 
-**When you can skip status sensors:**
-- Simple loads where switch state = power state (e.g., resistive heaters)
-- Loads that always consume power when switch is on
-- Loads without available status feedback
+**Control Switch** (optional) provides separate control:
 
-**How it works:**
-- **With status sensor:** Blueprint only sheds loads when status = 'on'
-  - Example: EV charger switch is on, but status sensor shows 'not charging' → Skip shedding
-- **Without status sensor:** Blueprint assumes switch state = power state
-  - Example: Water heater switch is on → Assume it's consuming its rated power
+- **When to use**: You want to cut power via a different switch than the status indicator
+  - Example: Monitor `climate.bedroom` but control via `switch.bedroom_breaker`
+- **When to skip**: Direct control of primary entity is fine
+  - Example: `switch.pool_pump` can be controlled directly
 
 ## 🤝 Support
 
 If you encounter issues:
-- **Validation errors:** Check for duplicate load names or duplicate switch entities
-- **Loads not shedding:** Check switch/sensor entities are valid and loads are included in managed loads list
+- **Validation errors:** Check for duplicate primary entities in your configuration
+- **Loads not shedding:** Check primary entity and control switch entities are valid and loads are included in managed loads list
 - **HA version:** Ensure you're running Home Assistant 2025.7.0 or later
 - Review automation traces in **Settings** → **Automations & Scenes** → _your automation_ → **Traces**
 - Check tracker state in **Developer Tools** → **States** → `input_text.load_shedding_shed_tracker`
-  - Should contain JSON array of load names: `["Water Heater", "EV Charger"]`
+  - Should contain JSON array of entity IDs: `["climate.living_room", "switch.water_heater"]`
 - Open an issue on [GitHub](https://github.com/Diaoul/hass-load-shedding/issues)
 
 ---

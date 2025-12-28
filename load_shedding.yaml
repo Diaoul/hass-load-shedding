@@ -91,31 +91,33 @@ blueprint:
             Configure each load you want to manage.
             Click "Add Item" to add a new load.
 
-            **Priority is determined by order:**
-            - Loads at the top of the list have highest priority (shed last)
-            - Loads at the bottom have lowest priority (shed first)
-            - Use drag & drop to reorder loads and adjust priorities
+            **Priority by order:** Top = highest priority (shed last), Bottom = lowest (shed first)
 
             **Fields:**
-            - **Name**: Friendly name for the load
-            - **Switch**: Entity to control the load on/off
-            - **Estimated Power**: Rated power consumption in Watts (check device specs)
-            - **Status Sensor** (optional): Sensor showing if load is actually ON (e.g., binary_sensor.heater_running)
-              - If provided: Only shed when status = 'on'
-              - If empty: Assume switch state = power state
+            - **Primary Entity**: Climate or switch that indicates load status
+              - Climate: Sheds when hvac_action is 'heating' or 'cooling'
+              - Switch: Sheds when state is 'on'
+            - **Control Switch** (optional): Switch to actually control the load
+              - If set: Uses this switch for on/off control
+              - If empty: Controls primary entity directly
+            - **Estimated Power**: Rated power consumption in Watts
           default: []
           selector:
             object:
               multiple: true
-              label_field: name
+              label_field: primary_entity
               fields:
-                name:
-                  label: Load Name
+                primary_entity:
+                  label: Primary Entity
                   selector:
-                    text:
+                    entity:
+                      filter:
+                        - domain: climate
+                        - domain: switch
+                      multiple: false
 
-                switch_entity:
-                  label: Switch Entity
+                control_switch:
+                  label: Control Switch (Optional)
                   selector:
                     entity:
                       domain: switch
@@ -130,15 +132,6 @@ blueprint:
                       step: 1
                       unit_of_measurement: "W"
                       mode: box
-
-                status_sensor:
-                  label: Status Sensor (Optional)
-                  selector:
-                    entity:
-                      filter:
-                        - domain: binary_sensor
-                        - domain: sensor
-                      multiple: false
 
     timing_and_stability:
       name: Timing & Stability
@@ -343,9 +336,9 @@ action:
             data:
               datetime: "1970-01-01 00:00:00"
 
-      # Clean up orphaned load names from tracker
+      # Clean up orphaned entity IDs from tracker
       - variables:
-          valid_load_names: "{{ managed_loads | map(attribute='name') | list }}"
+          valid_entity_ids: "{{ managed_loads | map(attribute='primary_entity') | list }}"
           current_shed_loads_list: >-
             {% set shed_json = states(shed_loads_tracker) %}
             {% if shed_json in ['', 'unknown', 'unavailable'] %}
@@ -354,7 +347,7 @@ action:
               {{ shed_json | from_json | default([]) }}
             {% endif %}
           cleaned_shed_loads: >-
-            {{ current_shed_loads_list | select('in', valid_load_names) | list }}
+            {{ current_shed_loads_list | select('in', valid_entity_ids) | list }}
 
       # Update tracker if we removed any orphans
       - if:
@@ -376,29 +369,35 @@ action:
       - repeat:
           for_each: "{{ currently_shed_loads }}"
           sequence:
-            # Find load object by name
+            # Find load object by primary_entity
             - variables:
-                load_name: "{{ repeat.item }}"
+                entity_id: "{{ repeat.item }}"
                 load: >-
-                  {{ managed_loads | selectattr('name', 'eq', load_name) | first | default(none) }}
-                switch_entity: "{{ load.switch_entity if load is not none else none }}"
+                  {{ managed_loads | selectattr('primary_entity', 'eq', entity_id) | first | default(none) }}
+                control_switch: "{{ load.get('control_switch', '') if load is not none else '' }}"
+                control_entity: >-
+                  {% if load is not none %}
+                    {% if control_switch and control_switch | length > 0 %}
+                      {{ control_switch }}
+                    {% else %}
+                      {{ entity_id }}
+                    {% endif %}
+                  {% else %}
+                    {{ none }}
+                  {% endif %}
 
-            # Validate load found and switch exists
+            # Validate load found and control entity exists
             - condition: template
-              value_template: "{{ load is not none and switch_entity is not none }}"
+              value_template: "{{ load is not none and control_entity is not none }}"
 
-            # Validate switch entity state
+            # Validate control entity state
             - condition: template
-              value_template: "{{ states(switch_entity) in ['on', 'off'] }}"
+              value_template: "{{ states(control_entity) not in ['unknown', 'unavailable'] }}"
 
-            # Turn on switch if currently off
-            - if:
-                - condition: template
-                  value_template: "{{ is_state(switch_entity, 'off') }}"
-              then:
-                - service: homeassistant.turn_on
-                  target:
-                    entity_id: "{{ switch_entity }}"
+            # Turn on control entity
+            - service: homeassistant.turn_on
+              target:
+                entity_id: "{{ control_entity }}"
 
       # Clear shed tracker
       - service: input_text.set_value
@@ -416,15 +415,9 @@ action:
         {{ false }}
       {% endif %}
 
-      {# Validate no duplicate load names #}
-      {% set load_names = managed_loads | map(attribute='name') | list %}
-      {% if load_names | unique | list | length != load_names | length %}
-        {{ false }}
-      {% endif %}
-
-      {# Validate no duplicate switch entities #}
-      {% set switches = managed_loads | map(attribute='switch_entity') | list %}
-      {% if switches | unique | list | length != switches | length %}
+      {# Validate no duplicate primary entities #}
+      {% set primary_entities = managed_loads | map(attribute='primary_entity') | list %}
+      {% if primary_entities | unique | list | length != primary_entities | length %}
         {{ false }}
       {% endif %}
 
@@ -460,60 +453,60 @@ action:
               candidates_to_shed: >-
                 {% set ns = namespace(candidates=[]) %}
                 {% for load in managed_loads %}
-                  {% set load_name = load.name %}
-                  {% set load_index = loop.index0 %}
-                  {% set switch_entity = load.switch_entity %}
-                  {% set status_sensor = load.get('status_sensor', '') %}
+                  {% set primary_entity = load.primary_entity %}
+                  {% set control_switch = load.get('control_switch', '') %}
                   {% set max_power = load.max_power | float(0) %}
+                  {% set load_index = loop.index0 %}
 
-                  {# Skip if max_power is invalid or zero #}
+                  {# Skip if max_power invalid #}
                   {% if max_power <= 0 %}
                     {% continue %}
                   {% endif %}
 
-                  {# Skip if switch entity invalid #}
-                  {% if not states(switch_entity) in ['on', 'off'] %}
+                  {# Determine control entity #}
+                  {% if control_switch and control_switch | length > 0 %}
+                    {% set control_entity = control_switch %}
+                  {% else %}
+                    {% set control_entity = primary_entity %}
+                  {% endif %}
+
+                  {# Validate control entity exists #}
+                  {% if states(control_entity) in ['unknown', 'unavailable'] %}
                     {% continue %}
                   {% endif %}
 
-                  {# Determine if load is currently ON #}
+                  {# Determine if load is ON based on primary entity type #}
                   {% set is_load_on = namespace(value=false) %}
+                  {% set entity_domain = primary_entity.split('.')[0] %}
 
-                  {% if status_sensor and status_sensor | length > 0 %}
-                    {# Status sensor provided - use it to determine state #}
-                    {% set status_state = states(status_sensor) %}
-
-                    {# Skip if status sensor unavailable/unknown #}
-                    {% if status_state in ['unknown', 'unavailable', ''] %}
-                      {% continue %}
-                    {% endif %}
-
-                    {# Check if status sensor reports ON #}
-                    {% if status_state in ['on', 'On', 'ON', '1', 'true', 'True'] %}
+                  {% if entity_domain == 'climate' %}
+                    {# For climate: check hvac_action attribute #}
+                    {% set hvac_action = state_attr(primary_entity, 'hvac_action') %}
+                    {% if hvac_action in ['heating', 'cooling'] %}
                       {% set is_load_on.value = true %}
                     {% endif %}
-                  {% else %}
-                    {# No status sensor - check switch entity state #}
-                    {% if is_state(switch_entity, 'on') %}
+                  {% elif entity_domain == 'switch' %}
+                    {# For switch: check state #}
+                    {% if is_state(primary_entity, 'on') %}
                       {% set is_load_on.value = true %}
                     {% endif %}
                   {% endif %}
 
-                  {# Skip if load is not ON (nothing to shed) #}
+                  {# Skip if load is not ON #}
                   {% if not is_load_on.value %}
                     {% continue %}
                   {% endif %}
 
-                  {# Add to candidates with max_power #}
+                  {# Add to candidates #}
                   {% set ns.candidates = ns.candidates + [{
-                    'name': load_name,
+                    'entity_id': primary_entity,
                     'index': load_index,
                     'power': max_power,
-                    'switch': switch_entity
+                    'control': control_entity
                   }] %}
                 {% endfor %}
 
-                {# Sort: highest index first (lowest priority = shed first), highest power first within same priority #}
+                {# Sort by index (descending) then power (descending) #}
                 {% set sorted_by_power = ns.candidates | sort(attribute='power', reverse=true) %}
                 {{ sorted_by_power | sort(attribute='index', reverse=true) }}
 
@@ -522,7 +515,7 @@ action:
 
           # Shed loads iteratively
           - variables:
-              shed_names: []
+              shed_entities: []
               remaining_deficit: "{{ power_deficit }}"
 
           - repeat:
@@ -532,23 +525,23 @@ action:
                 - condition: template
                   value_template: "{{ remaining_deficit > 0 }}"
 
-                # Turn off switch
+                # Turn off control entity
                 - service: homeassistant.turn_off
                   target:
-                    entity_id: "{{ repeat.item.switch }}"
+                    entity_id: "{{ repeat.item.control }}"
 
                 # Track this shed load
                 - variables:
-                    shed_names: "{{ shed_names + [repeat.item.name] }}"
+                    shed_entities: "{{ shed_entities + [repeat.item.entity_id] }}"
                     remaining_deficit: "{{ (remaining_deficit - repeat.item.power) | float }}"
 
           # Update tracker with newly shed loads
           - if:
               - condition: template
-                value_template: "{{ shed_names | length > 0 }}"
+                value_template: "{{ shed_entities | length > 0 }}"
             then:
               - variables:
-                  all_shed_loads: "{{ (currently_shed_loads + shed_names) | unique | list }}"
+                  all_shed_loads: "{{ (currently_shed_loads + shed_entities) | unique | list }}"
 
               - service: input_text.set_value
                 target:
@@ -591,25 +584,24 @@ action:
           - variables:
               candidates_to_restore: >-
                 {% set ns = namespace(candidates=[]) %}
-                {% for load_name in currently_shed_loads %}
-                  {# Find the load object and its index #}
+                {% for entity_id in currently_shed_loads %}
+                  {# Find load object by primary_entity #}
                   {% set load_index = namespace(value=-1) %}
                   {% set load = namespace(obj=none) %}
                   {% for l in managed_loads %}
-                    {% if l.name == load_name %}
+                    {% if l.primary_entity == entity_id %}
                       {% set load.obj = l %}
                       {% set load_index.value = loop.index0 %}
                     {% endif %}
                   {% endfor %}
 
-                  {# Skip if load not found (was removed from config) #}
+                  {# Skip if load not found (removed from config) #}
                   {% if load.obj is none %}
                     {% continue %}
                   {% endif %}
 
-                  {# Extract load properties #}
-                  {% set switch_entity = load.obj.switch_entity %}
-                  {% set status_sensor = load.obj.get('status_sensor', '') %}
+                  {% set primary_entity = load.obj.primary_entity %}
+                  {% set control_switch = load.obj.get('control_switch', '') %}
                   {% set max_power = load.obj.max_power | float(0) %}
 
                   {# Skip if max_power invalid #}
@@ -617,49 +609,50 @@ action:
                     {% continue %}
                   {% endif %}
 
-                  {# Validate switch entity exists #}
-                  {% if not states(switch_entity) in ['on', 'off'] %}
+                  {# Determine control entity #}
+                  {% if control_switch and control_switch | length > 0 %}
+                    {% set control_entity = control_switch %}
+                  {% else %}
+                    {% set control_entity = primary_entity %}
+                  {% endif %}
+
+                  {# Validate control entity exists #}
+                  {% if states(control_entity) in ['unknown', 'unavailable'] %}
                     {% continue %}
                   {% endif %}
 
-                  {# Determine if load is currently OFF (eligible for restoration) #}
+                  {# Determine if load is OFF based on primary entity type #}
                   {% set is_load_off = namespace(value=false) %}
+                  {% set entity_domain = primary_entity.split('.')[0] %}
 
-                  {% if status_sensor and status_sensor | length > 0 %}
-                    {# Status sensor provided - use it to determine state #}
-                    {% set status_state = states(status_sensor) %}
-
-                    {# Skip if status sensor unavailable/unknown #}
-                    {% if status_state in ['unknown', 'unavailable', ''] %}
-                      {% continue %}
-                    {% endif %}
-
-                    {# Check if status sensor reports OFF #}
-                    {% if status_state in ['off', 'Off', 'OFF', '0', 'false', 'False'] %}
+                  {% if entity_domain == 'climate' %}
+                    {# For climate: check hvac_action attribute #}
+                    {% set hvac_action = state_attr(primary_entity, 'hvac_action') %}
+                    {% if hvac_action in ['idle', 'off'] or hvac_action is none %}
                       {% set is_load_off.value = true %}
                     {% endif %}
-                  {% else %}
-                    {# No status sensor - check switch entity state #}
-                    {% if is_state(switch_entity, 'off') %}
+                  {% elif entity_domain == 'switch' %}
+                    {# For switch: check state #}
+                    {% if is_state(primary_entity, 'off') %}
                       {% set is_load_off.value = true %}
                     {% endif %}
                   {% endif %}
 
-                  {# Skip if load is not OFF (manually turned on or already restored) #}
+                  {# Skip if load is not OFF #}
                   {% if not is_load_off.value %}
                     {% continue %}
                   {% endif %}
 
-                  {# Add to candidates with max_power #}
+                  {# Add to candidates #}
                   {% set ns.candidates = ns.candidates + [{
-                    'name': load_name,
+                    'entity_id': primary_entity,
                     'index': load_index.value,
                     'power': max_power,
-                    'switch': switch_entity
+                    'control': control_entity
                   }] %}
                 {% endfor %}
 
-                {# Sort: lowest index first (highest priority = restore first), lowest power first within same priority #}
+                {# Sort by index (ascending) then power (ascending) #}
                 {% set sorted_by_power = ns.candidates | sort(attribute='power') %}
                 {{ sorted_by_power | sort(attribute='index') }}
 
@@ -669,7 +662,7 @@ action:
           # Restore loads iteratively
           - variables:
               power_accumulator: "{{ current_power_after_delay }}"
-              restored_names: []
+              restored_entities: []
 
           - repeat:
               for_each: "{{ candidates_to_restore }}"
@@ -678,24 +671,24 @@ action:
                 - condition: template
                   value_template: "{{ repeat.item.power <= (restoration_threshold - power_accumulator) }}"
 
-                # Turn on switch
+                # Turn on control entity
                 - service: homeassistant.turn_on
                   target:
-                    entity_id: "{{ repeat.item.switch }}"
+                    entity_id: "{{ repeat.item.control }}"
 
                 # Track restoration
                 - variables:
                     power_accumulator: "{{ (power_accumulator + repeat.item.power) | float }}"
-                    restored_names: "{{ restored_names + [repeat.item.name] }}"
+                    restored_entities: "{{ restored_entities + [repeat.item.entity_id] }}"
 
           # Update tracker (remove restored loads)
           - if:
               - condition: template
-                value_template: "{{ restored_names | length > 0 }}"
+                value_template: "{{ restored_entities | length > 0 }}"
             then:
               - variables:
                   remaining_shed_loads: >-
-                    {{ currently_shed_loads | reject('in', restored_names) | list }}
+                    {{ currently_shed_loads | reject('in', restored_entities) | list }}
 
               - service: input_text.set_value
                 target:
