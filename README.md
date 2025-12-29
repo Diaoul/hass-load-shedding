@@ -251,6 +251,29 @@ template:
 - **When to skip**: Direct control of primary entity is fine
   - Example: `switch.pool_pump` can be controlled directly
 
+### Inverted Control Logic
+
+Some use cases require **inverted control signals**:
+
+**Normal behavior (default):**
+- Shedding: Sends `turn_off` to control entity
+- Restoration: Sends `turn_on` to control entity
+
+**Inverted behavior (when enabled):**
+- Shedding: Sends `turn_on` to control entity
+- Restoration: Sends `turn_off` to control entity
+
+**Use cases:**
+- Override switches: `input_boolean.block_ev_charging` (turn on = block charging)
+- Automation triggers: Enable automation to prevent load
+- Inverse logic devices: ON = disabled, OFF = enabled
+
+**Example configuration:**
+- **Primary Entity**: `switch.ev_charger` (monitors charger state)
+- **Control Switch**: `input_boolean.block_charging` (override boolean)
+- **Invert Control Logic**: ✅ Enabled
+- **Behavior**: When shedding, blueprint turns ON the block_charging boolean to stop charging
+
 ---
 
 ## 📚 Advanced Documentation

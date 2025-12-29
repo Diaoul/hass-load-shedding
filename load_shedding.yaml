@@ -117,6 +117,10 @@ blueprint:
             - **Climate Detection Method** (optional): How to detect if climate is ON
               - hvac_action (accurate, recommended)
               - sensor_based (uses hvac_mode + temperature sensors)
+            - **Invert Control Logic** (optional): Reverses control signals
+              - Normal: Shedding = turn_off, Restoration = turn_on
+              - Inverted: Shedding = turn_on, Restoration = turn_off
+              - Use case: Override switches (turn_on to block instead of turn_off to disable)
           default: []
           selector:
             object:
@@ -160,6 +164,11 @@ blueprint:
                           value: hvac_action
                         - label: sensor_based (fallback)
                           value: sensor_based
+
+                invert_control:
+                  label: Invert Control Logic (Optional)
+                  selector:
+                    boolean:
 
     timing_and_stability:
       name: Timing & Stability
@@ -477,11 +486,13 @@ action:
                   {% endif %}
 
                   {# Add to candidates #}
+                  {% set invert_control = load.get('invert_control', false) %}
                   {% set ns.candidates = ns.candidates + [{
                     'entity_id': primary_entity,
                     'index': load_index,
                     'power': max_power,
-                    'control': control_entity
+                    'control': control_entity,
+                    'invert': invert_control
                   }] %}
                 {% endfor %}
 
@@ -504,8 +515,8 @@ action:
                 - condition: template
                   value_template: "{{ remaining_deficit > 0 }}"
 
-                # Turn off control entity
-                - service: homeassistant.turn_off
+                # Turn off control entity (or turn on if inverted)
+                - service: "{{ 'homeassistant.turn_on' if repeat.item.invert else 'homeassistant.turn_off' }}"
                   target:
                     entity_id: "{{ repeat.item.control }}"
 
@@ -645,11 +656,13 @@ action:
                     {% endif %}
 
                     {# Add to candidates #}
+                    {% set invert_control = load_obj.get('invert_control', false) %}
                     {% set ns.candidates = ns.candidates + [{
                       'entity_id': primary_entity,
                       'index': load_index,
                       'power': max_power,
-                      'control': control_entity
+                      'control': control_entity,
+                      'invert': invert_control
                     }] %}
                   {% endif %}
                 {% endfor %}
@@ -673,8 +686,8 @@ action:
                 - condition: template
                   value_template: "{{ repeat.item.power <= (restoration_threshold - power_accumulator) }}"
 
-                # Turn on control entity
-                - service: homeassistant.turn_on
+                # Turn on control entity (or turn off if inverted)
+                - service: "{{ 'homeassistant.turn_off' if repeat.item.invert else 'homeassistant.turn_on' }}"
                   target:
                     entity_id: "{{ repeat.item.control }}"
 
