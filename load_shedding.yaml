@@ -252,13 +252,20 @@ variables:
   # Current state
   current_power: "{{ states(total_power_sensor) | float(0) }}"
 
-  # Currently shed loads list (parse JSON array of load names)
+  # Currently shed loads list (parse JSON array of indices, convert to entity IDs)
   currently_shed_loads: >-
     {% set shed_json = states(shed_loads_tracker) %}
     {% if shed_json in ['', 'unknown', 'unavailable'] %}
       []
     {% else %}
-      {{ shed_json | from_json | default([]) }}
+      {% set shed_indices = shed_json | from_json | default([]) %}
+      {% set ns = namespace(entities=[]) %}
+      {% for idx in shed_indices %}
+        {% if idx < managed_loads | length %}
+          {% set ns.entities = ns.entities + [managed_loads[idx].primary_entity] %}
+        {% endif %}
+      {% endfor %}
+      {{ ns.entities }}
     {% endif %}
 
   # Last action timestamp
@@ -304,29 +311,35 @@ action:
             data:
               value: "[]"
 
-      # Clean up orphaned entity IDs from tracker
+      # Clean up orphaned indices from tracker
       - variables:
-          valid_entity_ids: "{{ managed_loads | map(attribute='primary_entity') | list }}"
-          current_shed_loads_list: >-
+          max_valid_index: "{{ (managed_loads | length) - 1 }}"
+          current_shed_indices_list: >-
             {% set shed_json = states(shed_loads_tracker) %}
             {% if shed_json in ['', 'unknown', 'unavailable'] %}
               []
             {% else %}
               {{ shed_json | from_json | default([]) }}
             {% endif %}
-          cleaned_shed_loads: >-
-            {{ current_shed_loads_list | select('in', valid_entity_ids) | list }}
+          cleaned_shed_indices: >-
+            {% set ns = namespace(indices=[]) %}
+            {% for idx in current_shed_indices_list %}
+              {% if idx <= max_valid_index %}
+                {% set ns.indices = ns.indices + [idx] %}
+              {% endif %}
+            {% endfor %}
+            {{ ns.indices }}
 
       # Update tracker if we removed any orphans
       - if:
           - condition: template
-            value_template: "{{ current_shed_loads_list | length != cleaned_shed_loads | length }}"
+            value_template: "{{ current_shed_indices_list | length != cleaned_shed_indices | length }}"
         then:
           - service: input_text.set_value
             target:
               entity_id: "{{ shed_loads_tracker }}"
             data:
-              value: "{{ cleaned_shed_loads | to_json }}"
+              value: "{{ cleaned_shed_indices | to_json }}"
 
   # Validate configuration
   - condition: template
@@ -466,7 +479,7 @@ action:
 
       # Shed loads iteratively
       - variables:
-          shed_entities: []
+          shed_indices: []
           remaining_deficit: "{{ power_deficit }}"
 
       - repeat:
@@ -478,7 +491,7 @@ action:
 
             # Track this shed load BEFORE turning off (prevents lost tracking if service fails)
             - variables:
-                shed_entities: "{{ shed_entities + [repeat.item.entity_id] }}"
+                shed_indices: "{{ shed_indices + [repeat.item.index] }}"
                 remaining_deficit: "{{ (remaining_deficit - repeat.item.power) | float }}"
 
             # Turn off control entity (or turn on if inverted)
@@ -489,16 +502,23 @@ action:
       # Update tracker with newly shed loads
       - if:
           - condition: template
-            value_template: "{{ shed_entities | length > 0 }}"
+            value_template: "{{ shed_indices | length > 0 }}"
         then:
           - variables:
-              all_shed_loads: "{{ (currently_shed_loads + shed_entities) | unique | list }}"
+              currently_shed_indices: >-
+                {% set shed_json = states(shed_loads_tracker) %}
+                {% if shed_json in ['', 'unknown', 'unavailable'] %}
+                  []
+                {% else %}
+                  {{ shed_json | from_json | default([]) }}
+                {% endif %}
+              all_shed_indices: "{{ (currently_shed_indices + shed_indices) | unique | list }}"
 
           - service: input_text.set_value
             target:
               entity_id: "{{ shed_loads_tracker }}"
             data:
-              value: "{{ all_shed_loads | to_json }}"
+              value: "{{ all_shed_indices | to_json }}"
 
           - service: input_datetime.set_datetime
             target:
@@ -625,7 +645,7 @@ action:
       # Restore loads iteratively
       - variables:
           power_accumulator: "{{ current_power }}"
-          restored_entities: []
+          restored_indices: []
 
       - repeat:
           for_each: "{{ candidates_to_restore }}"
@@ -637,7 +657,7 @@ action:
             # Track restoration BEFORE turning on (prevents lost tracking if service fails)
             - variables:
                 power_accumulator: "{{ (power_accumulator + repeat.item.power) | float }}"
-                restored_entities: "{{ restored_entities + [repeat.item.entity_id] }}"
+                restored_indices: "{{ restored_indices + [repeat.item.index] }}"
 
             # Turn on control entity (or turn off if inverted)
             - service: "{{ 'homeassistant.turn_off' if repeat.item.invert else 'homeassistant.turn_on' }}"
@@ -647,17 +667,24 @@ action:
       # Update tracker (remove restored loads)
       - if:
           - condition: template
-            value_template: "{{ restored_entities | length > 0 }}"
+            value_template: "{{ restored_indices | length > 0 }}"
         then:
           - variables:
-              remaining_shed_loads: >-
-                {{ currently_shed_loads | reject('in', restored_entities) | list }}
+              currently_shed_indices: >-
+                {% set shed_json = states(shed_loads_tracker) %}
+                {% if shed_json in ['', 'unknown', 'unavailable'] %}
+                  []
+                {% else %}
+                  {{ shed_json | from_json | default([]) }}
+                {% endif %}
+              remaining_shed_indices: >-
+                {{ currently_shed_indices | reject('in', restored_indices) | list }}
 
           - service: input_text.set_value
             target:
               entity_id: "{{ shed_loads_tracker }}"
             data:
-              value: "{{ remaining_shed_loads | to_json }}"
+              value: "{{ remaining_shed_indices | to_json }}"
 
           - service: input_datetime.set_datetime
             target:
