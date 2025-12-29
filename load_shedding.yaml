@@ -524,9 +524,11 @@ action:
             {# Build lookup dictionary once - O(M) #}
             {% set load_lookup = namespace(dict={}) %}
             {% for load in managed_loads %}
-              {% set _ = load_lookup.dict.__setitem__(load.primary_entity, {
-                'load': load,
-                'index': loop.index0
+              {% set load_lookup.dict = load_lookup.dict | combine({
+                load.primary_entity: {
+                  'load': load,
+                  'index': loop.index0
+                }
               }) %}
             {% endfor %}
 
