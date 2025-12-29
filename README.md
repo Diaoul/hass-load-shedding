@@ -85,7 +85,6 @@ Click "Add Load" for each load you want to manage. **Priority is determined by o
 
 1. **Monitor** - Continuously tracks total power consumption
 2. **Evaluate** - When power exceeds safety threshold (default 90%):
-   - Wait for shedding delay (prevents reacting to transient spikes)
    - Build list of active loads that can be shed
    - Sort by list order (highest index first = lowest priority), then power (highest first)
 3. **Shed** - Turn off loads until under threshold
@@ -94,8 +93,7 @@ Click "Add Load" for each load you want to manage. **Priority is determined by o
 ### Load Restoration Process
 
 1. **Monitor** - When power drops below restoration threshold (default 80%):
-   - Wait for restoration delay
-   - Check minimum shed duration elapsed
+   - Check minimum shed duration elapsed (default: 5 minutes)
 2. **Evaluate** - Build list of shed loads:
    - Sort by list order (lowest index first = highest priority), then power (lowest first)
 3. **Restore** - Turn on loads one at a time while budget available
@@ -118,13 +116,13 @@ Click "Add Load" for each load you want to manage. **Priority is determined by o
 1. **Initial:** Heat pump ON (2000W)
 2. **EV plugged in:** EV + heat pump = 9000W (under 8100W threshold) ✅
 3. **Water heater starts:** 2000 + 7000 + 3000 = 12000W (exceeds 8100W) ⚠️
-4. **After 10s delay:** Shed lowest priority first:
+4. **Immediately shed** lowest priority first:
    - Shed dishwasher (index 3)... but it's not on, skip
    - Shed water heater (index 2, 3000W) → 9000W
    - Still over 8100W, shed EV charger (index 1, 7000W) → 2000W ✅
 5. **Current state:** Only heat pump ON, water heater + EV charger shed
 6. **Heat pump cycles off:** 0W (under 7200W restoration threshold)
-7. **After 1min delay + 5min minimum shed:**
+7. **After 5min minimum shed duration:**
    - Restore highest priority first: EV charger (index 1) → 7000W
    - Try water heater (index 2): 7000 + 3000 = 10000W > 7200W ❌ (not enough budget)
 8. **Final:** EV charging, water heater still shed (will restore when EV finishes)
@@ -142,9 +140,13 @@ Priority is determined by the order of loads in your configuration:
 
 ### Timing Guidelines
 
-- **Shedding Delay (10s)** - Prevents reacting to brief spikes (e.g., appliance startup)
-- **Restoration Delay (1m)** - Allows power to stabilize before restoring loads
-- **Minimum Shed Duration (5m)** - Prevents rapid on/off cycling (critical for appliance lifespan)
+- **Minimum Shed Duration (5m)** - Once a load is shed, it stays off for at least this duration. This prevents rapid on/off cycling that can damage appliances and cause power instability. This is the PRIMARY anti-flapping protection.
+
+**Decision speed:** The blueprint makes instant shedding and restoration decisions based on your power sensor readings. Since most power sensors update every 30-60 seconds, the sensor refresh rate naturally debounces transient spikes. Combined with the 5-minute minimum shed duration, this provides robust protection against flapping without adding artificial delays.
+
+**For slow sensors (1 minute+ refresh):** The blueprint's instant decisions work perfectly. Your sensor can't detect brief spikes anyway, so there's no benefit to additional delays.
+
+**For fast sensors (< 10 seconds refresh):** The blueprint still makes instant decisions, but your faster sensor will better capture real power fluctuations. The minimum shed duration still prevents flapping.
 
 ### Threshold Guidelines
 
@@ -289,29 +291,27 @@ The blueprint uses a **priority-based algorithm** with the following decision fl
 
 | Step | Action | Priority Sort |
 |------|--------|---------------|
-| 1️⃣ | Wait for shedding delay (10s default) | - |
-| 2️⃣ | Identify active loads that can be shed | - |
-| 3️⃣ | Sort candidates | **List order (highest index first)**, then power (highest first) |
-| 4️⃣ | Shed loads one by one until under threshold | Lowest priority shed first |
-| 5️⃣ | Track shed loads in helper | - |
+| 1️⃣ | Identify active loads that can be shed | - |
+| 2️⃣ | Sort candidates | **List order (highest index first)**, then power (highest first) |
+| 3️⃣ | Shed loads one by one until under threshold | Lowest priority shed first |
+| 4️⃣ | Track shed loads in helper | - |
 
 **Restoration Mode** (when power < restoration threshold):
 
 | Step | Action | Priority Sort |
 |------|--------|---------------|
-| 1️⃣ | Wait for restoration delay (1m default) | - |
-| 2️⃣ | Check minimum shed duration (5m default) | - |
-| 3️⃣ | Identify shed loads that are OFF | - |
-| 4️⃣ | Sort candidates | **List order (lowest index first)**, then power (lowest first) |
-| 5️⃣ | Calculate available power budget | restoration_threshold - current_power |
-| 6️⃣ | Restore loads one by one while budget available | Highest priority restored first |
-| 7️⃣ | Update tracker after each restoration | - |
+| 1️⃣ | Check minimum shed duration (5m default) | - |
+| 2️⃣ | Identify shed loads that are OFF | - |
+| 3️⃣ | Sort candidates | **List order (lowest index first)**, then power (lowest first) |
+| 4️⃣ | Calculate available power budget | restoration_threshold - current_power |
+| 5️⃣ | Restore loads one by one while budget available | Highest priority restored first |
+| 6️⃣ | Update tracker after each restoration | - |
 
 **Key Points:**
 - **Priority = List Order**: Top load in config = highest priority (shed last, restore first)
 - **Power is secondary sort**: When same priority level, higher power shed first (makes more room), lower power restored first (fits in budget easier)
-- **Delays prevent flapping**: Shedding delay avoids transient spikes, restoration delay allows stabilization
-- **Minimum shed duration**: Prevents rapid cycling that damages appliances
+- **Instant decisions**: Makes immediate shedding/restoration decisions based on sensor readings
+- **Minimum shed duration**: PRIMARY anti-flapping protection - prevents rapid cycling that damages appliances
 
 ### Load State Detection
 
@@ -348,11 +348,12 @@ Multiple layers prevent rapid on/off cycling:
 
 | Protection | Default | Purpose |
 |------------|---------|---------|
-| **Shedding Delay** | 10 seconds | Ignore transient power spikes (appliance startups) |
-| **Restoration Delay** | 1 minute | Let power stabilize before restoring |
 | **Minimum Shed Duration** | 5 minutes | Prevent damage from frequent power cycling |
 | **Hysteresis Gap** | 10% (90% shed, 80% restore) | Prevent threshold bounce |
+| **Sensor Refresh Rate** | User-dependent (typically 30-60s) | Natural debouncing of transient spikes |
 | **Margin Validation** | Enforced | Blocks configurations where restoration ≥ safety |
+
+**Note:** The blueprint makes instant decisions based on sensor readings. With typical sensor refresh rates of 30-60 seconds, transient spikes are naturally filtered out. The minimum shed duration provides robust anti-flapping protection.
 
 **Example:**
 - Safety margin: 90% (shed at 8100W)
