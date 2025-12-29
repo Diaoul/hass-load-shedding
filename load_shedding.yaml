@@ -440,7 +440,7 @@ action:
 
                   {% if entity_domain == 'climate' %}
                     {# Get detection method (default to hvac_action) #}
-                    {% set detection_method = load_obj.get('climate_detection', 'hvac_action') %}
+                    {% set detection_method = load.get('climate_detection', 'hvac_action') %}
 
                     {% if detection_method == 'sensor_based' %}
                       {# Sensor-based: check hvac_mode + temperature delta #}
