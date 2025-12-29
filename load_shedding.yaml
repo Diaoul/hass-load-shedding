@@ -665,6 +665,4 @@ action:
             data:
               datetime: "{{ now() }}"
 
-mode: queued
-max: 10
-max_exceeded: silent
+mode: single
