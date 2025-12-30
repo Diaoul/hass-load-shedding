@@ -1,4 +1,6 @@
-# ⚡ Load Shedding
+# ⚡ Load Shedding Blueprint
+
+**Version:** 1.0
 
 A smart, reliable Home Assistant blueprint for managing electrical loads to prevent exceeding power capacity limits.
 
@@ -53,6 +55,7 @@ Select your helper in the **Tracking Helpers** section.
 ### 💡 Configuration Example
 
 **Power Monitoring:**
+
 - Total Power Sensor: `sensor.linky_power_watts` (your VA→W template sensor if needed)
 - Max Capacity Sensor: `input_number.max_capacity` (or template sensor for dynamic)
 - Safety Margin: `90` % (shed at 8100W if max is 9000W)
@@ -64,11 +67,11 @@ Click "Add Load" for each load you want to manage. **Priority is determined by o
 
 **Example loads (in priority order):**
 
-| Priority | Load | Primary Entity | Control Switch | Power |
-|----------|------|----------------|----------------|-------|
-| 🔴 **Highest** | Heat Pump | `climate.living_room` | `switch.heat_pump_breaker` | 2000W |
-| 🟡 **Medium** | EV Charger | `switch.ev_charger` | *(leave empty)* | 7000W |
-| 🟢 **Lowest** | Water Heater | `switch.water_heater` | *(leave empty)* | 3000W |
+| Priority       | Load         | Primary Entity        | Control Switch             | Power |
+| -------------- | ------------ | --------------------- | -------------------------- | ----- |
+| 🔴 **Highest** | Heat Pump    | `climate.living_room` | `switch.heat_pump_breaker` | 2000W |
+| 🟡 **Medium**  | EV Charger   | `switch.ev_charger`   | _(leave empty)_            | 7000W |
+| 🟢 **Lowest**  | Water Heater | `switch.water_heater` | _(leave empty)_            | 3000W |
 
 💡 **Tip**: Use drag & drop in the blueprint UI to reorder loads and adjust priorities.
 
@@ -95,17 +98,20 @@ Click "Add Load" for each load you want to manage. **Priority is determined by o
 ### Example Scenario
 
 **Setup:**
+
 - Max capacity: 9000W
 - Safety margin: 90% (shed at 8100W)
 - Restoration margin: 80% (restore at 7200W)
 
 **Loads (in priority order - highest to lowest):**
+
 1. Heat Pump - 2000W (index 0 - highest priority)
 2. EV Charger - 7000W (index 1)
 3. Water Heater - 3000W (index 2)
 4. Dishwasher - 1500W (index 3 - lowest priority)
 
 **Timeline:**
+
 1. **Initial:** Heat pump ON (2000W)
 2. **EV plugged in:** EV + heat pump = 9000W (under 8100W threshold) ✅
 3. **Water heater starts:** 2000 + 7000 + 3000 = 12000W (exceeds 8100W) ⚠️
@@ -125,6 +131,7 @@ Click "Add Load" for each load you want to manage. **Priority is determined by o
 ### Priority Guidelines
 
 Priority is determined by the order of loads in your configuration:
+
 - **Loads at the top** - Highest priority, shed last (e.g., heating/cooling, essential appliances)
 - **Loads in the middle** - Medium priority (e.g., EV charging, water heater)
 - **Loads at the bottom** - Lowest priority, shed first (e.g., pool pump, laundry, dishwasher)
@@ -168,6 +175,7 @@ Create a **Template Sensor** for capacity that changes based on conditions.
 Add to your `configuration.yaml`:
 
 **Solar + Grid:**
+
 ```yaml
 template:
   - sensor:
@@ -176,9 +184,11 @@ template:
         state: >-
           {{ (9000 + states('sensor.solar_power')|float(0)) | int }}
 ```
-*Capacity increases when solar is producing power*
+
+_Capacity increases when solar is producing power_
 
 **Time-of-use:**
+
 ```yaml
 template:
   - sensor:
@@ -191,9 +201,11 @@ template:
             9000
           {% endif %}
 ```
-*Higher limit during off-peak hours (10 PM - 6 AM)*
+
+_Higher limit during off-peak hours (10 PM - 6 AM)_
 
 **Battery state:**
+
 ```yaml
 template:
   - sensor:
@@ -209,7 +221,8 @@ template:
             9000
           {% endif %}
 ```
-*Capacity varies based on battery charge level*
+
+_Capacity varies based on battery charge level_
 
 #### Converting VA to Watts
 
@@ -224,7 +237,8 @@ template:
         state: >-
           {{ (states('sensor.linky_power_va')|float(0) * 0.95) | int }}
 ```
-*Replace 0.95 with your measured power factor*
+
+_Replace 0.95 with your measured power factor_
 
 ### Primary Entity vs Control Switch
 
@@ -251,19 +265,23 @@ template:
 Some use cases require **inverted control signals**:
 
 **Normal behavior (default):**
+
 - Shedding: Sends `turn_off` to control entity
 - Restoration: Sends `turn_on` to control entity
 
 **Inverted behavior (when enabled):**
+
 - Shedding: Sends `turn_on` to control entity
 - Restoration: Sends `turn_off` to control entity
 
 **Use cases:**
+
 - Override switches: `input_boolean.block_ev_charging` (turn on = block charging)
 - Automation triggers: Enable automation to prevent load
 - Inverse logic devices: ON = disabled, OFF = enabled
 
 **Example configuration:**
+
 - **Primary Entity**: `switch.ev_charger` (monitors charger state)
 - **Control Switch**: `input_boolean.block_charging` (override boolean)
 - **Invert Control Logic**: ✅ Enabled
@@ -282,25 +300,26 @@ The blueprint uses a **priority-based algorithm** with the following decision fl
 
 **Shedding Mode** (when power > safety threshold):
 
-| Step | Action | Priority Sort |
-|------|--------|---------------|
-| 1️⃣ | Identify active loads that can be shed | - |
-| 2️⃣ | Sort candidates | **List order (highest index first)**, then power (highest first) |
-| 3️⃣ | Shed loads one by one until under threshold | Lowest priority shed first |
-| 4️⃣ | Track shed loads in helper | - |
+| Step | Action                                      | Priority Sort                                                    |
+| ---- | ------------------------------------------- | ---------------------------------------------------------------- |
+| 1️⃣   | Identify active loads that can be shed      | -                                                                |
+| 2️⃣   | Sort candidates                             | **List order (highest index first)**, then power (highest first) |
+| 3️⃣   | Shed loads one by one until under threshold | Lowest priority shed first                                       |
+| 4️⃣   | Track shed loads in helper                  | -                                                                |
 
 **Restoration Mode** (when power < restoration threshold):
 
-| Step | Action | Priority Sort |
-|------|--------|---------------|
-| 1️⃣ | Check minimum shed duration (5m default) | - |
-| 2️⃣ | Identify shed loads that are OFF | - |
-| 3️⃣ | Sort candidates | **List order (lowest index first)**, then power (lowest first) |
-| 4️⃣ | Calculate available power budget | restoration_threshold - current_power |
-| 5️⃣ | Restore loads one by one while budget available | Highest priority restored first |
-| 6️⃣ | Update tracker after each restoration | - |
+| Step | Action                                          | Priority Sort                                                  |
+| ---- | ----------------------------------------------- | -------------------------------------------------------------- |
+| 1️⃣   | Check minimum shed duration (5m default)        | -                                                              |
+| 2️⃣   | Identify shed loads that are OFF                | -                                                              |
+| 3️⃣   | Sort candidates                                 | **List order (lowest index first)**, then power (lowest first) |
+| 4️⃣   | Calculate available power budget                | restoration_threshold - current_power                          |
+| 5️⃣   | Restore loads one by one while budget available | Highest priority restored first                                |
+| 6️⃣   | Update tracker after each restoration           | -                                                              |
 
 **Key Points:**
+
 - **Priority = List Order**: Top load in config = highest priority (shed last, restore first)
 - **Power is secondary sort**: When same priority level, higher power shed first (makes more room), lower power restored first (fits in budget easier)
 - **Instant decisions**: Makes immediate shedding/restoration decisions based on sensor readings
@@ -310,24 +329,27 @@ The blueprint uses a **priority-based algorithm** with the following decision fl
 
 How the blueprint determines if a load is ON or OFF:
 
-| Entity Domain | Detection Method | ON Condition | OFF Condition | Use Case |
-|---------------|------------------|--------------|---------------|----------|
-| **Climate (hvac_action)** | Default | `hvac_action` = 'heating' or 'cooling' | `hvac_action` = 'idle' or 'off' | Thermostats that report hvac_action correctly |
-| **Climate (sensor_based)** | Fallback | `hvac_mode` + temp delta<br>(e.g., mode='heat' AND current < target) | At target temp or mode='off' | Thermostats that don't report hvac_action |
-| **Switch** | N/A | `state` = 'on' | `state` = 'off' | Simple on/off loads |
+| Entity Domain              | Detection Method | ON Condition                                                         | OFF Condition                   | Use Case                                      |
+| -------------------------- | ---------------- | -------------------------------------------------------------------- | ------------------------------- | --------------------------------------------- |
+| **Climate (hvac_action)**  | Default          | `hvac_action` = 'heating' or 'cooling'                               | `hvac_action` = 'idle' or 'off' | Thermostats that report hvac_action correctly |
+| **Climate (sensor_based)** | Fallback         | `hvac_mode` + temp delta<br>(e.g., mode='heat' AND current < target) | At target temp or mode='off'    | Thermostats that don't report hvac_action     |
+| **Switch**                 | N/A              | `state` = 'on'                                                       | `state` = 'off'                 | Simple on/off loads                           |
 
 **Climate Detection Methods:**
+
 - **hvac_action (recommended)**: Most accurate - detects when actively heating/cooling. Use when your thermostat reports hvac_action correctly.
 - **sensor_based (fallback)**: Uses hvac_mode + temperature sensors to infer heating/cooling. Checks if current temperature is below/above target. More accurate than hvac_mode alone. Use for thermostats that don't report hvac_action.
 - **Configure per load**: Set "Climate Detection Method" field when adding each climate entity
 
 **Sensor-based detection logic:**
+
 - **Heat mode**: ON when current < target, OFF when current ≥ target
 - **Cool mode**: ON when current > target, OFF when current ≤ target
 - **Auto mode**: ON when current ≠ target, OFF when current = target
 - **Off mode**: Always OFF
 
 **Control Switch (Optional):**
+
 - **Primary Entity**: Used to detect load state (is it consuming power?)
 - **Control Switch**: Used to actually turn load on/off (accepts switch or input_boolean)
 - **Example**: Monitor `climate.bedroom` status, control via `switch.bedroom_breaker`
@@ -339,16 +361,17 @@ How the blueprint determines if a load is ON or OFF:
 
 Multiple layers prevent rapid on/off cycling:
 
-| Protection | Default | Purpose |
-|------------|---------|---------|
-| **Minimum Shed Duration** | 5 minutes | Prevent damage from frequent power cycling |
-| **Hysteresis Gap** | 10% (90% shed, 80% restore) | Prevent threshold bounce |
-| **Sensor Refresh Rate** | User-dependent (typically 30-60s) | Natural debouncing of transient spikes |
-| **Margin Validation** | Enforced | Blocks configurations where restoration ≥ safety |
+| Protection                | Default                           | Purpose                                          |
+| ------------------------- | --------------------------------- | ------------------------------------------------ |
+| **Minimum Shed Duration** | 5 minutes                         | Prevent damage from frequent power cycling       |
+| **Hysteresis Gap**        | 10% (90% shed, 80% restore)       | Prevent threshold bounce                         |
+| **Sensor Refresh Rate**   | User-dependent (typically 30-60s) | Natural debouncing of transient spikes           |
+| **Margin Validation**     | Enforced                          | Blocks configurations where restoration ≥ safety |
 
 **Note:** The blueprint makes instant decisions based on sensor readings. With typical sensor refresh rates of 30-60 seconds, transient spikes are naturally filtered out. The minimum shed duration provides robust anti-flapping protection.
 
 **Example:**
+
 - Safety margin: 90% (shed at 8100W)
 - Restoration margin: 80% (restore at 7200W)
 - Gap: 900W buffer prevents constant shed/restore
@@ -360,6 +383,7 @@ Multiple layers prevent rapid on/off cycling:
 ## 🤝 Support
 
 If you encounter issues:
+
 - **Validation errors:** Check for duplicate primary entities in your configuration
 - **Loads not shedding:** Check primary entity and control switch entities are valid and loads are included in managed loads list
 - **HA version:** Ensure you're running Home Assistant 2025.7.0 or later
