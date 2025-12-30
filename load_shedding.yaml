@@ -142,7 +142,6 @@ blueprint:
 
                 max_power:
                   label: Maximum Power (Watts)
-                  description: Maximum power consumption in Watts. Used for restoration budget calculations and as fallback when power sensor is unavailable.
                   selector:
                     number:
                       min: 1
@@ -153,7 +152,6 @@ blueprint:
 
                 power_sensor:
                   label: Power Sensor (Optional)
-                  description: Real-time power consumption sensor for accurate shedding decisions. Falls back to Maximum Power if not provided or unavailable.
                   selector:
                     entity:
                       filter:
