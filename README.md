@@ -29,23 +29,16 @@ Click the button above to import the blueprint directly into your Home Assistant
 4. **Add your loads** - Click "Add Load" for each appliance
 5. **Set tracking helpers** - Link the helpers you created
 
-### ⏱️ Required: Tracking Helpers
+### ⏱️ Required: Tracking Helper
 
-For load shedding to work, create 2 helpers to track automation state:
+For anti-flapping protection, create 1 datetime helper:
 
-**1. Create Helpers**
+**1. Create Helper**
 
 Go to **Settings** → **Devices & Services** → [**Helpers**](https://my.home-assistant.io/redirect/helpers/)
 
-Create these two helpers:
+Create a **Date and Time** helper:
 
-**a) Shed Tracker (Input Text)**
-- Name: `Load Shedding - Shed Tracker`
-- Entity ID: `input_text.load_shedding_shed_tracker`
-- Initial value: *(leave empty)*
-- Max length: 255 (or higher if managing many loads)
-
-**b) Last Action Time (Date and Time)**
 - Name: `Load Shedding - Last Action`
 - Entity ID: `input_datetime.load_shedding_last_action`
 - Has date: ✅ Enabled
@@ -53,9 +46,9 @@ Create these two helpers:
 
 **2. Configure in Blueprint**
 
-Select your helpers in the **Tracking Helpers** section.
+Select your helper in the **Tracking Helpers** section.
 
-**Why?** These helpers track which loads are currently shed and prevent rapid cycling by recording action timestamps.
+**Why?** This helper tracks when the last shed/restore action occurred to enforce minimum shed duration and prevent rapid on/off cycling.
 
 ### 💡 Configuration Example
 
@@ -372,7 +365,7 @@ If you encounter issues:
 - **HA version:** Ensure you're running Home Assistant 2025.7.0 or later
 - Review automation traces in **Settings** → **Automations & Scenes** → _your automation_ → **Traces**
 - Check tracker state in **Developer Tools** → **States** → `input_text.load_shedding_shed_tracker`
-  - Should contain JSON array of entity IDs: `["climate.living_room", "switch.water_heater"]`
+  - Should contain JSON array of load indices: `[0, 3, 7]` (not entity IDs - saves space!)
 - Open an issue on [GitHub](https://github.com/Diaoul/hass-load-shedding/issues)
 
 ---
