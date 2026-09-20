@@ -3,25 +3,35 @@ blueprint:
   description: |
     Proactive load management to prevent exceeding power capacity limits.
 
-    Supports dynamic capacity via sensor input (e.g., solar + grid limit, time-of-use).
+    Supports dynamic capacity via sensor input (e.g. solar + grid limit, time-of-use).
 
     **Features:**
     - ⚡ Real-time power monitoring
-    - 🎯 Order-based priority (unlimited levels)
-    - 🔄 Intelligent load restoration
+    - 🎯 Order-based priority: the order of your list
+    - 🔄 Budget-aware restoration
     - 🛡️ Configurable safety margins
     - 🚫 Anti-flapping protection
     - 📝 Structured load configuration
 
     **How it works:**
-    1. Monitors total power consumption (e.g., from Linky meter)
-    2. Makes instant shedding decisions when approaching capacity (default: 90%)
-    3. Restores highest-priority loads when power drops (default: 80%)
-    4. Prevents rapid on/off cycling with minimum shed duration (default: 5min) and hysteresis
+    1. Monitors total power consumption (e.g. from a Linky meter)
+    2. Sheds loads when consumption passes the safety margin (default: 90% of capacity)
+    3. Restores loads, highest priority first, once consumption drops below the
+       restoration margin (default: 80%), filling the budget up to the safety
+       margin so an overprovisioned house actually gets its loads back
+    4. Prevents rapid cycling with a minimum shed duration (default: 5 min) and
+       the gap between the two margins
 
-    **Configuration:** Use the structured load form - only 2 global helpers required.
+    Every run recomputes what should be shed from current entity states, so a
+    missed run is harmless: the next one starts from scratch.
+
+    **Configuration:** one datetime helper for the automation, plus one
+    input_boolean per load, used to disable it.
 
     **Requirements:** Home Assistant 2025.7.0 or later
+  source_url: https://github.com/Diaoul/hass-load-shedding/blob/main/load_shedding.yaml
+  homeassistant:
+    min_version: "2025.7.0"
   domain: automation
   input:
     power_monitoring:
@@ -32,9 +42,12 @@ blueprint:
         total_power_sensor:
           name: 📊 Total Power Consumption Sensor
           description: |
-            Sensor measuring total household power consumption (e.g., Linky meter, whole-home energy monitor).
+            Sensor measuring total household power consumption (e.g. Linky meter, whole-home energy monitor).
 
             If your meter reports VA (apparent power) instead of W (real power), create a template sensor to convert using your power factor.
+
+            While this sensor is unavailable the automation does nothing: it will
+            not shed and will not restore.
           selector:
             entity:
               filter:
@@ -50,12 +63,14 @@ blueprint:
             Can be static (input_number helper) or dynamic (template sensor).
 
             **Static capacity:**
-            - Create input_number helper with fixed value (e.g., 9000)
+            - Create input_number helper with fixed value (e.g. 9000)
 
             **Dynamic capacity examples:**
             - Solar + Grid: Template sensor with `9000 + solar_power`
             - Time-of-use: Different limits by hour (off-peak vs peak)
             - Battery state: Higher limit when battery charged
+
+            A capacity of 0, or an unavailable entity, stops the run.
           selector:
             entity:
               filter:
@@ -81,9 +96,13 @@ blueprint:
         restoration_margin_percent:
           name: 🔄 Restoration Margin Percentage
           description: |
-            Only restore loads when consumption is below this percentage.
-            Should be lower than safety margin to prevent flapping.
-            Example: 80% means restore at 7200W if max is 9000W.
+            Only start restoring loads when consumption is below this percentage.
+            Must be lower than the safety margin; the gap is what prevents flapping.
+            Example: 80% means restoration may start below 7200W if max is 9000W.
+
+            This decides *when* restoration starts, not how much comes back: loads
+            are then released until their rated powers reach the safety margin, so
+            the headroom between the two margins is usable rather than reserved.
           default: 80
           selector:
             number:
@@ -104,19 +123,22 @@ blueprint:
             Configure each load you want to manage.
             Click "Add Item" to add a new load.
 
-            **Priority by order:** Top = highest priority (shed last), Bottom = lowest (shed first)
+            **Priority by order:** top = highest priority (shed last), bottom = lowest (shed first).
 
             **Fields:**
-            - **Detection Entity**: Climate or switch that indicates if the load is consuming power
-              - Climate: Detects ON when hvac_action is 'heating'/'cooling' (or sensor-based if configured)
-              - Switch: Detects ON when state is 'on'
-            - **Off Override**: Switch or input_boolean to disable the load
-              - When ON: Load is disabled (shed)
-              - When OFF: Load is enabled (can run normally)
-            - **Estimated Power**: Rated power consumption in Watts
-            - **Climate Detection Method** (optional): How to detect if climate is ON
-              - hvac_action (accurate, recommended)
-              - sensor_based (uses hvac_mode + temperature sensors)
+            - **Detection Entity** (required): climate or switch telling whether the load is currently drawing power
+              - Climate: ON when `hvac_action` is `heating`/`cooling`, or by temperature delta if `sensor_based` is selected
+              - Switch: ON when the state is `on`
+            - **Off Override** (required): input_boolean that disables the load
+              - ON = load shed, OFF = load free to run
+              - It holds the shed state, so nothing is remembered between runs
+            - **Maximum Power** (required): rated consumption in Watts. Sets the restoration budget, and stands in for a missing power sensor when shedding
+            - **Power Sensor** (optional): real consumption, used instead of the rated value when deciding how much shedding is needed
+            - **Climate Detection Method** (optional): defaults to `hvac_action`
+
+            A load missing a required field stops the whole automation: with a
+            broken entry the shed maths is wrong for every load, so it refuses to
+            act rather than shed a partial list.
           default: []
           selector:
             object:
@@ -176,7 +198,9 @@ blueprint:
       input:
         minimum_shed_duration:
           name: ⏱️ Minimum Shed Duration
-          description: Once a load is shed, keep it off for at least this long (prevents rapid cycling)
+          description: |
+            Nothing is restored until this long has passed since the last shed
+            or restore (prevents rapid cycling).
           default:
             hours: 0
             minutes: 5
@@ -195,10 +219,14 @@ blueprint:
           description: |
             `required`
 
-            Input datetime helper to track when last shed/restore action occurred.
-            Used for minimum shed duration enforcement.
+            Date and time helper stamped every time a load is shed or restored.
+            It is what enforces the minimum shed duration.
 
-            **Initialize to any datetime (e.g., 1970-01-01 00:00:00).**
+            **Create it with both date and time enabled.** With only one of them
+            it reports a time of day rather than a date, which would disable the
+            minimum shed duration, so restoration refuses to run; shedding still
+            works. Its initial value does not matter, and a missing helper simply
+            reads as "long ago".
 
             Create helper [here](https://my.home-assistant.io/redirect/helpers/).
           selector:
@@ -207,362 +235,212 @@ blueprint:
                 - domain: input_datetime
               multiple: false
 
+# Every input a template reads has to be mapped here first: !input is not
+# visible to templates.
 variables:
-  # Input assignments - power monitoring
   total_power_sensor: !input total_power_sensor
   max_power_sensor: !input max_power_sensor
   safety_margin: !input safety_margin_percent
   restoration_margin: !input restoration_margin_percent
-
-  # Get max power from sensor (can be input_number or template sensor)
-  max_power: "{{ states(max_power_sensor) | float(0) }}"
-
-  # Input assignments - loads
   managed_loads: !input managed_loads
-
-  # Input assignments - timing
   minimum_shed_duration: !input minimum_shed_duration
-
-  # Input assignments - tracking
   last_action_datetime: !input last_action_datetime
 
-  # Calculated thresholds
-  shedding_threshold: "{{ (max_power * (safety_margin / 100)) | int }}"
-  restoration_threshold: "{{ (max_power * (restoration_margin / 100)) | int }}"
-
-  # Current state
+  max_power: "{{ states(max_power_sensor) | float(0) }}"
   current_power: "{{ states(total_power_sensor) | float(0) }}"
+  shedding_threshold: "{{ (max_power * safety_margin / 100) | round(0) }}"
+  restoration_threshold: "{{ (max_power * restoration_margin / 100) | round(0) }}"
 
-  # Currently shed loads list (check off override states)
-  currently_shed_loads: >-
-    {% set ns = namespace(shed=[]) %}
+  # Drops any entry missing a required field. The guard compares this length
+  # against managed_loads, so a dropped entry stops the run rather than vanishing.
+  loads: >-
+    {% set ns = namespace(items=[]) %}
     {% for load in managed_loads %}
-      {% set override = load.get('off_override') %}
-      {% if override and is_state(override, 'on') %}
-        {% set ns.shed = ns.shed + [load.detection_entity] %}
+      {% set detection = load.get('detection_entity') %}
+      {% set control = load.get('off_override') %}
+      {% set rated = load.get('max_power') | float(0) %}
+      {% if detection and control and rated > 0 %}
+        {% set ns.items = ns.items + [{
+          'index': loop.index0,
+          'detection': detection,
+          'control': control,
+          'rated': rated,
+          'sensor': load.get('power_sensor') or '',
+          'method': load.get('climate_detection') or 'hvac_action'
+        }] %}
       {% endif %}
     {% endfor %}
-    {{ ns.shed }}
+    {{ ns.items }}
 
-  # Last action timestamp
-  last_action_time: >-
-    {{ states(last_action_datetime) | as_datetime | as_local | as_timestamp }}
+  detection_entities: "{{ managed_loads | map(attribute='detection_entity', default='') | list }}"
 
-  # Time since last action
+  # What every load is doing right now. Both plans are built from this.
+  load_status: >-
+    {% set ns = namespace(items=[]) %}
+    {% for load in loads %}
+      {% set on = namespace(value=false) %}
+      {% if load.detection.split('.')[0] == 'climate' %}
+        {% if load.method == 'sensor_based' %}
+          {% set mode = states(load.detection) %}
+          {% set current = state_attr(load.detection, 'current_temperature') | float(0) %}
+          {% set target = state_attr(load.detection, 'temperature') | float(0) %}
+          {% if mode == 'heat' %}
+            {% set on.value = current < target %}
+          {% elif mode == 'cool' %}
+            {% set on.value = current > target %}
+          {% elif mode in ['heat_cool', 'auto'] %}
+            {% set on.value = current != target %}
+          {% endif %}
+        {% else %}
+          {% set on.value = state_attr(load.detection, 'hvac_action') in ['heating', 'cooling'] %}
+        {% endif %}
+      {% else %}
+        {% set on.value = is_state(load.detection, 'on') %}
+      {% endif %}
+
+      {# Rated power is a guess, so prefer the sensor when it reads at all.
+         A negative figure is export, not consumption. #}
+      {% set measured = states(load.sensor) | float(-1) if load.sensor and has_value(load.sensor) else -1 %}
+
+      {% set ns.items = ns.items + [{
+        'index': load.index,
+        'control': load.control,
+        'rated': load.rated,
+        'power': measured if measured >= 0 else load.rated,
+        'on': on.value,
+        'shed': is_state(load.control, 'on'),
+        'available': has_value(load.control)
+      }] %}
+    {% endfor %}
+    {{ ns.items }}
+
+  # Idle loads are shed too: one left free to start would blow the budget the
+  # moment it does. They cannot count against the deficit though, or shedding an
+  # idle load would look like it freed power that was never being drawn.
+  shed_plan: >-
+    {% set ns = namespace(deficit=current_power - shedding_threshold, picked=[]) %}
+    {% for load in load_status | rejectattr('shed') | selectattr('available')
+                               | sort(attribute='index', reverse=true) %}
+      {% if ns.deficit > 0 %}
+        {% set ns.picked = ns.picked + [load.control] %}
+        {% if load.on %}
+          {% set ns.deficit = ns.deficit - load.power %}
+        {% endif %}
+      {% endif %}
+    {% endfor %}
+    {{ ns.picked }}
+
+  # The budget runs to the *shedding* threshold, not the restoration one: that
+  # margin only decides when it is calm enough to start, and that gate is in the
+  # conditions below. Using it for both left any load rated between the two
+  # margins permanently shed, however empty the house was.
+  restore_plan: >-
+    {% set ns = namespace(budget=shedding_threshold - current_power, picked=[]) %}
+    {% for load in load_status | selectattr('shed') | selectattr('available')
+                               | sort(attribute='index') %}
+      {# Still drawing means already counted in current_power, so releasing it
+         costs nothing. Charging it rated power would strand the override for as
+         long as the load kept running. #}
+      {% set cost = 0 if load.on else load.rated %}
+      {% if cost <= ns.budget %}
+        {% set ns.picked = ns.picked + [load.control] %}
+        {% set ns.budget = ns.budget - cost %}
+      {% endif %}
+    {% endfor %}
+    {{ ns.picked }}
+
+  # The timestamp attribute avoids parsing the state and guessing its timezone.
+  # A missing helper reads as "long ago" rather than raising.
   seconds_since_last_action: >-
-    {{ (now().timestamp() - last_action_time) | int }}
+    {{ (now().timestamp() - (state_attr(last_action_datetime, 'timestamp') | float(0))) | int }}
 
-trigger:
-  # Trigger on HA start
+  # A helper without both date and time reports `timestamp` as seconds since
+  # midnight, which reads as "ages ago" every run and silently disables the
+  # minimum shed duration. An absent attribute means the helper is gone, not
+  # misshapen, so it does not count as wrong here.
+  tracker_usable: >-
+    {{ state_attr(last_action_datetime, 'has_date') != false
+       and state_attr(last_action_datetime, 'has_time') != false }}
+
+# Event-driven only: there is no periodic tick, so an override flipped by hand
+# stays flipped until one of these fires.
+triggers:
   - trigger: homeassistant
     event: start
     id: ha_start
 
-  # Primary trigger: Power consumption changes
+  # not_to is what makes these ignore attribute-only updates: a state trigger
+  # with no to/from/not_to/not_from matches every change, attributes included.
   - trigger: state
     entity_id: !input total_power_sensor
+    not_to: [unavailable, unknown]
     id: power_changed
 
-  # Secondary trigger: Periodic re-evaluation (failsafe)
-  - trigger: time_pattern
-    minutes: "/1"
-    id: periodic_check
+  - trigger: state
+    entity_id: !input max_power_sensor
+    not_to: [unavailable, unknown]
+    id: capacity_changed
 
-condition: []
+actions:
+  # Guard the run here rather than in conditions: a manual "Run actions" skips
+  # top-level conditions entirely.
+  - alias: Stop unless the configuration and the sensors can be trusted
+    condition: >-
+      {{ has_value(total_power_sensor)
+        and has_value(max_power_sensor)
+        and max_power > 0
+        and restoration_margin < safety_margin
+        and managed_loads | length > 0
+        and loads | length == managed_loads | length
+        and detection_entities | unique | list | length == detection_entities | length }}
 
-action:
-  # Validate configuration
-  - condition: template
-    value_template: >-
-      {% if managed_loads | length == 0 %}
-        {{ false }}
-      {% endif %}
+  - choose:
+      - alias: Over the safety margin, shed
+        conditions:
+          - "{{ current_power > shedding_threshold and shed_plan | length > 0 }}"
+        sequence:
+          # One call per entity: continue_on_error stops a failure from skipping
+          # the steps after it, but cannot rescue the rest of a grouped call.
+          - alias: Shed every planned load
+            repeat:
+              for_each: "{{ shed_plan }}"
+              sequence:
+                - action: homeassistant.turn_on
+                  target:
+                    entity_id: "{{ repeat.item }}"
+                  continue_on_error: true
 
-      {# Validate no duplicate detection entities #}
-      {% set detection_entities = managed_loads | map(attribute='detection_entity') | list %}
-      {% if detection_entities | unique | list | length != detection_entities | length %}
-        {{ false }}
-      {% endif %}
-
-      {# Validate restoration margin is lower than safety margin #}
-      {% if restoration_margin >= safety_margin %}
-        {{ false }}
-      {% endif %}
-
-      {# Validate all loads have off_override (now mandatory) #}
-      {% for load in managed_loads %}
-        {% if not load.get('off_override') %}
-          {{ false }}
-        {% endif %}
-      {% endfor %}
-
-      {{ true }}
-
-  # Determine mode (shedding or restoration)
-  - variables:
-      power_over_shedding_threshold: "{{ current_power > shedding_threshold }}"
-      power_under_restoration_threshold: "{{ current_power < restoration_threshold }}"
-
-  # SHEDDING MODE
-  - if:
-      - condition: template
-        value_template: "{{ power_over_shedding_threshold }}"
-    then:
-      # Build candidate list for shedding (instant decision based on trigger)
-      - variables:
-          candidates_to_shed: >-
-            {% set ns = namespace(candidates=[]) %}
-            {% for load in managed_loads %}
-              {% set detection_entity = load.detection_entity %}
-              {% set off_override = load.get('off_override', '') %}
-              {% set max_power = load.max_power | float(0) %}
-              {% set load_index = loop.index0 %}
-
-              {# Get actual power from sensor if available #}
-              {% set actual_power = max_power %}
-              {% set power_sensor = load.get('power_sensor', '') %}
-              {% if power_sensor and power_sensor | length > 0 %}
-                {% if states(power_sensor) not in ['unknown', 'unavailable'] %}
-                  {% set sensor_value = states(power_sensor) | float(-1) %}
-                  {# Use sensor value if valid (non-negative) #}
-                  {% if sensor_value >= 0 %}
-                    {% set actual_power = sensor_value %}
-                  {% endif %}
-                {% endif %}
-              {% endif %}
-
-              {# Skip if max_power invalid #}
-              {% if max_power <= 0 %}
-                {% continue %}
-              {% endif %}
-
-              {# Determine control entity (off_override is now mandatory) #}
-              {% if off_override and off_override | length > 0 %}
-                {% set control_entity = off_override %}
-              {% else %}
-                {% set control_entity = detection_entity %}
-              {% endif %}
-
-              {# Validate control entity exists #}
-              {% if states(control_entity) in ['unknown', 'unavailable'] %}
-                {% continue %}
-              {% endif %}
-
-              {# Determine if load is ON based on detection entity type #}
-              {% set is_load_on = namespace(value=false) %}
-              {% set entity_domain = detection_entity.split('.')[0] %}
-
-              {% if entity_domain == 'climate' %}
-                {# Get detection method (default to hvac_action) #}
-                {% set detection_method = load.get('climate_detection', 'hvac_action') %}
-
-                {% if detection_method == 'sensor_based' %}
-                  {# Sensor-based: check hvac_mode + temperature delta #}
-                  {% set hvac_mode = states(detection_entity) %}
-                  {% set current_temp = state_attr(detection_entity, 'current_temperature') | float(0) %}
-                  {% set target_temp = state_attr(detection_entity, 'temperature') | float(0) %}
-
-                  {% if hvac_mode == 'heat' and current_temp < target_temp %}
-                    {% set is_load_on.value = true %}
-                  {% elif hvac_mode == 'cool' and current_temp > target_temp %}
-                    {% set is_load_on.value = true %}
-                  {% elif hvac_mode in ['heat_cool', 'auto'] %}
-                    {% if current_temp < target_temp or current_temp > target_temp %}
-                      {% set is_load_on.value = true %}
-                    {% endif %}
-                  {% endif %}
-                {% else %}
-                  {# Default: check hvac_action attribute #}
-                  {% set hvac_action = state_attr(detection_entity, 'hvac_action') %}
-                  {% if hvac_action in ['heating', 'cooling'] %}
-                    {% set is_load_on.value = true %}
-                  {% endif %}
-                {% endif %}
-              {% elif entity_domain == 'switch' %}
-                {# For switch: check state #}
-                {% if is_state(detection_entity, 'on') %}
-                  {% set is_load_on.value = true %}
-                {% endif %}
-              {% endif %}
-
-              {# Add to candidates #}
-              {% set ns.candidates = ns.candidates + [{
-                'entity_id': detection_entity,
-                'index': load_index,
-                'power': actual_power,
-                'max_power': max_power,
-                'control': control_entity
-              }] %}
-            {% endfor %}
-
-            {# Sort by index (descending) then power (descending) #}
-            {% set sorted_by_power = ns.candidates | sort(attribute='power', reverse=true) %}
-            {{ sorted_by_power | sort(attribute='index', reverse=true) }}
-
-          # Calculate deficit
-          power_deficit: "{{ current_power - shedding_threshold }}"
-
-      # Shed loads iteratively
-      - variables:
-          remaining_deficit: "{{ power_deficit }}"
-          shed_any: false
-
-      - repeat:
-          for_each: "{{ candidates_to_shed }}"
-          sequence:
-            # Only shed if still needed
-            - condition: template
-              value_template: "{{ remaining_deficit > 0 }}"
-
-            # Update deficit and tracking
-            - variables:
-                remaining_deficit: "{{ (remaining_deficit - repeat.item.power) | float }}"
-                shed_any: true
-
-            # Enable off override (turn ON = disable load)
-            - service: homeassistant.turn_on
-              target:
-                entity_id: "{{ repeat.item.control }}"
-
-      # Update last action time if any loads were shed
-      - if:
-          - condition: template
-            value_template: "{{ shed_any }}"
-        then:
-          - service: input_datetime.set_datetime
+          - alias: Stamp the last-action tracker
+            action: input_datetime.set_datetime
             target:
               entity_id: "{{ last_action_datetime }}"
             data:
-              datetime: "{{ now() }}"
+              timestamp: "{{ now().timestamp() }}"
 
-  # RESTORATION MODE
-  - if:
-      - condition: template
-        value_template: "{{ power_under_restoration_threshold and currently_shed_loads | length > 0 }}"
-    then:
-      # Check minimum shed duration (instant decision based on trigger)
-      - condition: template
-        value_template: >-
-          {{ seconds_since_last_action >= timedelta(**minimum_shed_duration).total_seconds() }}
+      - alias: Under the restoration margin, restore
+        conditions:
+          - "{{ current_power < restoration_threshold }}"
+          - "{{ tracker_usable }}"
+          - "{{ seconds_since_last_action >= timedelta(**minimum_shed_duration).total_seconds() }}"
+          - "{{ restore_plan | length > 0 }}"
+        sequence:
+          - alias: Restore every planned load
+            repeat:
+              for_each: "{{ restore_plan }}"
+              sequence:
+                - action: homeassistant.turn_off
+                  target:
+                    entity_id: "{{ repeat.item }}"
+                  continue_on_error: true
 
-      # Build restoration candidates (check which off overrides are ON)
-      - variables:
-          candidates_to_restore: >-
-            {% set ns = namespace(candidates=[]) %}
-
-            {% for load in managed_loads %}
-              {% set detection_entity = load.detection_entity %}
-              {% set off_override = load.get('off_override', '') %}
-              {% set max_power = load.max_power | float(0) %}
-              {% set load_index = loop.index0 %}
-
-              {# Skip if max_power invalid #}
-              {% if max_power <= 0 %}
-                {% continue %}
-              {% endif %}
-
-              {# Off override is now mandatory #}
-              {% set control_entity = off_override %}
-
-              {# Skip if control is not ON (= not shed) #}
-              {% if not is_state(control_entity, 'on') %}
-                {% continue %}
-              {% endif %}
-
-              {# Validate control entity exists #}
-              {% if states(control_entity) in ['unknown', 'unavailable'] %}
-                {% continue %}
-              {% endif %}
-
-              {# Determine if load is OFF based on detection entity type #}
-              {% set is_load_off = namespace(value=false) %}
-              {% set entity_domain = detection_entity.split('.')[0] %}
-
-              {% if entity_domain == 'climate' %}
-                {# Get detection method (default to hvac_action) #}
-                {% set detection_method = load.get('climate_detection', 'hvac_action') %}
-
-                {% if detection_method == 'sensor_based' %}
-                  {# Sensor-based: check hvac_mode + temperature delta #}
-                  {% set hvac_mode = states(detection_entity) %}
-                  {% set current_temp = state_attr(detection_entity, 'current_temperature') | float(0) %}
-                  {% set target_temp = state_attr(detection_entity, 'temperature') | float(0) %}
-
-                  {% if hvac_mode == 'off' %}
-                    {% set is_load_off.value = true %}
-                  {% elif hvac_mode == 'heat' and current_temp >= target_temp %}
-                    {% set is_load_off.value = true %}
-                  {% elif hvac_mode == 'cool' and current_temp <= target_temp %}
-                    {% set is_load_off.value = true %}
-                  {% elif hvac_mode in ['heat_cool', 'auto'] and current_temp == target_temp %}
-                    {% set is_load_off.value = true %}
-                  {% endif %}
-                {% else %}
-                  {# Default: check hvac_action attribute #}
-                  {% set hvac_action = state_attr(detection_entity, 'hvac_action') %}
-                  {% if hvac_action in ['idle', 'off'] or hvac_action is none %}
-                    {% set is_load_off.value = true %}
-                  {% endif %}
-                {% endif %}
-              {% elif entity_domain == 'switch' %}
-                {# For switch: check state #}
-                {% if is_state(detection_entity, 'off') %}
-                  {% set is_load_off.value = true %}
-                {% endif %}
-              {% endif %}
-
-              {# Skip if load is not OFF #}
-              {% if not is_load_off.value %}
-                {% continue %}
-              {% endif %}
-
-              {# Add to candidates #}
-              {% set ns.candidates = ns.candidates + [{
-                'entity_id': detection_entity,
-                'index': load_index,
-                'power': max_power,
-                'control': control_entity
-              }] %}
-            {% endfor %}
-
-            {# Sort by index (ascending) then power (ascending) #}
-            {% set sorted_by_power = ns.candidates | sort(attribute='power') %}
-            {{ sorted_by_power | sort(attribute='index') }}
-
-          # Calculate available budget
-          available_budget: "{{ restoration_threshold - current_power }}"
-
-      # Restore loads iteratively
-      - variables:
-          power_accumulator: "{{ current_power }}"
-          restored_any: false
-
-      - repeat:
-          for_each: "{{ candidates_to_restore }}"
-          sequence:
-            # Check if we have budget for this load
-            - condition: template
-              value_template: "{{ repeat.item.power <= (restoration_threshold - power_accumulator) }}"
-
-            # Update accumulator and tracking
-            - variables:
-                power_accumulator: "{{ (power_accumulator + repeat.item.power) | float }}"
-                restored_any: true
-
-            # Disable off override (turn OFF = enable load)
-            - service: homeassistant.turn_off
-              target:
-                entity_id: "{{ repeat.item.control }}"
-
-      # Update last action time if any loads were restored
-      - if:
-          - condition: template
-            value_template: "{{ restored_any }}"
-        then:
-          - service: input_datetime.set_datetime
+          - alias: Stamp the last-action tracker
+            action: input_datetime.set_datetime
             target:
               entity_id: "{{ last_action_datetime }}"
             data:
-              datetime: "{{ now() }}"
+              timestamp: "{{ now().timestamp() }}"
 
+# An overlapping run is dropped and logged as "Already running". The next state
+# change recomputes everything anyway, and max_exceeded is left loud on purpose
+# so the drops stay visible.
 mode: single
